@@ -1,0 +1,34 @@
+---
+name: recall
+description: Search the user's long-term memory store before answering questions about past work, earlier sessions, their machines and servers, decisions already made, or before redoing something that may have been tried (and failed) before. Also use it to save an important fact right away, or to correct a memory that turned out wrong.
+---
+
+# Long-term memory (claudysha plugin)
+
+The store holds many small memories extracted automatically from every Claude Code session on this machine: facts, decisions (with the why), dead ends, events, todos, and the user's preferences and feedback. It is not loaded into context: search it. (Hand-written notes are in the home folder's `brain/` (`${CLAUDE_PLUGIN_ROOT}/claudysha home`); `core.md` and the topic index are already in context.)
+
+The CLI is `${CLAUDE_PLUGIN_ROOT}/mem`.
+
+## Search
+
+```
+${CLAUDE_PLUGIN_ROOT}/mem search <words...> [-p project] [-t type] [-f] [-a]
+```
+
+- Terms are OR-ed and ranked, so give several words, including exact tokens (hostnames, paths, versions, ports): `mem search media server transcoding gpu`.
+- `-p` filters by project (`mem stats` lists them), `-t` by type (fact, decision, dead_end, event, todo, preference, feedback).
+- `-f` shows the details (tags, source session, use count); `-a` includes superseded and rejected entries (history).
+- Entries are dated: when two disagree, trust the newer one, and verify against the real system before acting on anything important. Extraction is done by a small model and can be wrong.
+
+## Save and correct
+
+```
+${CLAUDE_PLUGIN_ROOT}/mem add "<self-contained sentence, with the why>" -t <type> -p <project>
+${CLAUDE_PLUGIN_ROOT}/mem supersede <id> "<corrected text>"
+```
+
+Sessions are extracted automatically when they end or compact, so only save by hand what matters right away, or correct what you found wrong. Use absolute dates. Never store secrets.
+
+## Proposed entries
+
+Extracted `preference` and `feedback` entries shape how Claude behaves, so they wait as `proposed` until the user approves them. Never approve them yourself: the user reviews them with `mem review` in a terminal, or with `/claudysha:memory-review`.

@@ -1,0 +1,13 @@
+# claudysha settings. install.sh copies this file to ~/.config/claudysha/claudysha.conf
+# (or $XDG_CONFIG_HOME/claudysha/claudysha.conf) if it doesn't exist yet: edit that copy.
+# Lines are `key = value`; `#` starts a comment.
+
+# Where the plugin keeps its data: brain/ (core.md, notes, backlog), memory/ (database), backups/.
+home = ~/.claudysha
+
+# Who Claude works with. Used by the memory extraction prompts and the session notes.
+user_name = Nevysha
+user_pronouns = she/her
+
+# Projects the extractor should prefer when filing memories, comma-separated (optional).
+projects =

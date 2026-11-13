@@ -1,0 +1,14 @@
+{
+  "name": "nevysha",
+  "description": "Nevysha's Claude Code plugins",
+  "owner": {
+    "name": "Nevysha"
+  },
+  "plugins": [
+    {
+      "name": "claudysha",
+      "source": "./",
+      "description": "Personal memory for Claude Code: automatic long-term store, core memory, backlog"
+    }
+  ]
+}
