@@ -26,40 +26,10 @@ That knowledge stays in the user's data folder, on their machine, and the parts 
 
 claudysha has two layers: **the plugin**, which provides what every module shares, and **modules**, which add the actual features.
 
-```mermaid
-%%{init: {'themeVariables': {'edgeLabelBackground': '#ffffff00'}, 'themeCSS': '.labelBkg { background-color: transparent !important; }'}}%%
-flowchart TB
-    CC(["💬 Claude Code sessions"])
-
-    subgraph MODS["🧩 Modules"]
-        direction LR
-        MEM["🧠 Memory"] ~~~ NEXT["… more to come"]
-    end
-
-    subgraph PLUGIN["🔌 Plugin"]
-        direction LR
-        SET["⚙️ settings"] ~~~ DF["📁 data folder"] ~~~ AL["📦 archive / load"]
-    end
-
-    DATA[("~/.claudysha")]
-
-    CC <-->|"hooks & skills"| MODS
-    MODS -->|"use"| PLUGIN
-    PLUGIN -->|"keeps everything in"| DATA
-
-    classDef claude fill:#F4D9CF,stroke:#D97757,color:#3B1D12
-    classDef module fill:#DCE9FB,stroke:#4A86E8,color:#0E2A55
-    classDef plugin fill:#DDF2E3,stroke:#3FA65A,color:#123A1E
-    classDef data fill:#FCEFC7,stroke:#D9A21B,color:#4A3505
-    classDef soon fill:#F2F2F2,stroke:#9A9A9A,color:#555555,stroke-dasharray: 5 5
-    class CC claude
-    class MEM module
-    class NEXT soon
-    class SET,DF,AL plugin
-    class DATA data
-    style MODS fill:#F3F8FE,stroke:#4A86E8,color:#0E2A55
-    style PLUGIN fill:#F3FBF5,stroke:#3FA65A,color:#123A1E
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">
+  <img alt="Claude Code sessions use modules through hooks and skills; modules use the plugin (settings, data folder, archive / load), which keeps everything in ~/.claudysha" src="docs/diagrams/architecture-light.png" width="560">
+</picture>
 
 - **The plugin**: installation, settings, one data folder for everything, archive / load of that folder.
 - **Modules**: each lives in its own folder, keeps its data in its own part of the data folder, and plugs into Claude Code through hooks and skills.
@@ -147,27 +117,10 @@ Modules read the settings and the data folder path through `plugin/claudysha.py`
 
 Gives Claude a memory that carries across sessions.
 
-```mermaid
-%%{init: {'themeVariables': {'edgeLabelBackground': '#ffffff00'}, 'themeCSS': '.labelBkg { background-color: transparent !important; }'}}%%
-flowchart LR
-    S(["💬 your sessions"]) -->|"as it goes, on compact, on end:<br/>Haiku extracts"| LT[("🗄️ long-term store")]
-    LT -->|"searched when it matters"| C(["🤖 Claude"])
-    CORE["✍️ core memory<br/>core.md + topic index"] -->|"every session start"| C
-    BL["⏰ backlog"] -->|"due items at session start"| C
-    U(["🙋 you"]) -->|"write / approve"| CORE
-    U -->|"approve preferences & feedback"| LT
-
-    classDef claude fill:#F4D9CF,stroke:#D97757,color:#3B1D12
-    classDef you fill:#EBDDF7,stroke:#8E5CC4,color:#2E1547
-    classDef store fill:#DCE9FB,stroke:#4A86E8,color:#0E2A55
-    classDef core fill:#DDF2E3,stroke:#3FA65A,color:#123A1E
-    classDef backlog fill:#FCEFC7,stroke:#D9A21B,color:#4A3505
-    class S,C claude
-    class U you
-    class LT store
-    class CORE core
-    class BL backlog
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/memory-dark.png">
+  <img alt="Sessions are extracted into the long-term store, which Claude searches; core memory and due backlog items reach Claude at session start; you write the core and approve preferences" src="docs/diagrams/memory-light.png" width="820">
+</picture>
 
 It has three parts:
 

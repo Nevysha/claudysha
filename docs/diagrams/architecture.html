@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>#d{width:760px;display:flex;flex-direction:column;align-items:center;gap:76px}
+.panel{width:100%;box-sizing:border-box}.row{display:flex;gap:12px}.row .card{flex:1}</style></head><body>
+<div id="d">
+  <div class="card orange" id="cc"><div class="ico">💬</div><div><b>Claude Code sessions</b></div></div>
+  <div class="panel blue" id="mods"><h3>🧩 Modules</h3><div class="row">
+    <div class="card blue"><div class="ico">🧠</div><div><b>Memory</b><small>long-term store · core memory · backlog</small></div></div>
+    <div class="card soon"><div class="ico" style="--c:var(--grey)">✨</div><div><b>more to come</b></div></div></div></div>
+  <div class="panel green" id="plg"><h3>🔌 Plugin</h3><div class="row">
+    <div class="card green"><div class="ico">⚙️</div><div><b>settings</b></div></div>
+    <div class="card green"><div class="ico">📁</div><div><b>data folder</b></div></div>
+    <div class="card green"><div class="ico">📦</div><div><b>archive / load</b></div></div></div></div>
+  <div class="card amber" id="data"><div class="ico">🗂️</div><div><b class="mono">~/.claudysha</b></div></div>
+</div>
+<script src="wires.js"></script><script>
+wire("cc","mods","hooks &amp; skills","b","t",{both:true});wire("mods","plg","use");wire("plg","data","keeps everything in");
+</script></body></html>

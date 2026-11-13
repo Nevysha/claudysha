@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="style.css">
+<style>#d{width:1100px;display:grid;grid-template-columns:190px 1fr 260px 1.15fr 170px;grid-template-rows:repeat(3,auto);row-gap:26px;align-items:center}
+.c1{grid-column:1}.c3{grid-column:3}.c5{grid-column:5;grid-row:1/4}</style></head><body>
+<div id="d">
+  <div class="card orange c1" id="s" style="grid-row:1"><div class="ico">💬</div><div><b>your sessions</b></div></div>
+  <div class="card violet c1" id="u" style="grid-row:2"><div class="ico">🙋</div><div><b>you</b></div></div>
+  <div class="card blue c3" id="lt" style="grid-row:1"><div class="ico">🗄️</div><div><b>long-term store</b><small>extracted, searchable</small></div></div>
+  <div class="card green c3" id="core" style="grid-row:2"><div class="ico">✍️</div><div><b>core memory</b><small>core.md + topic index</small></div></div>
+  <div class="card amber c3" id="bl" style="grid-row:3"><div class="ico">⏰</div><div><b>backlog</b><small>ideas with a review date</small></div></div>
+  <div class="card orange c5" id="c"><div class="ico">🤖</div><div><b>Claude</b></div></div>
+</div>
+<script src="wires.js"></script><script>
+wire("s","lt","Haiku extracts as it goes","r","l",{dy:-10,t:.5});
+wire("u","core","write / approve","r","l");
+wire("u","lt","approve preferences","r","l",{t:.62,dy:12});
+wire("lt","c","searched when it matters","r","l",{t:.45,dy:-14});
+wire("core","c","every session start","r","l",{t:.42});
+wire("bl","c","due items at start","r","l",{t:.45,dy:14});
+</script></body></html>
