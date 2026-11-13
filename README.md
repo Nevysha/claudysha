@@ -1,6 +1,8 @@
 # claudysha
 
-A personal plugin for [Claude Code](https://code.claude.com): the things that make Claude work the way its user wants, across sessions.
+A personal plugin for [Claude Code](https://code.claude.com).
+
+**"Personal" means personal to whoever uses it.** It isn't one person's setup to copy: every install starts out generic and becomes personal to its own user as it learns from their sessions: what they work on, the decisions they made and why, how they like Claude to work with them. Two people using claudysha end up with two different Claudes, each shaped by its own user's habits. That knowledge stays in the user's data folder, on their machine, and the parts that change how Claude behaves only change with their OK.
 
 claudysha is made of two layers:
 
