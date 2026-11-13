@@ -1,6 +1,8 @@
 """Tests for mem.py. Run with: python3 -m unittest discover -s memory/tests"""
 import io
 import json
+import re
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -27,8 +29,8 @@ class StoreTest(unittest.TestCase):
         self.db = mem.connect()
         self.addCleanup(self.db.close)
 
-    def add(self, text, type_="fact", project="homelab", **kw):
-        return mem.insert(self.db, text, type_, project, **kw)
+    def add(self, text, type_="fact", scope="homelab", **kw):
+        return mem.insert(self.db, text, type_, scope, **kw)
 
     def ids(self, rows):
         return [r["id"] for r in rows]
@@ -52,9 +54,12 @@ class TestSearch(StoreTest):
         self.assertEqual(self.ids(mem.search(self.db, "pnpm", include_old=True)), [old])
 
     def test_filters(self):
-        a = self.add("the media server uses the iGPU", project="homelab")
-        self.add("media client on the iGPU laptop", project="laptop", type_="todo")
-        self.assertEqual(self.ids(mem.search(self.db, "media", project="homelab")), [a])
+        a = self.add("the media server uses the iGPU", scope="homelab")
+        b = self.add("media client on the iGPU laptop", scope="laptop", type_="todo")
+        g = self.add("media goes on the big disks", scope="global")
+        self.assertEqual(self.ids(mem.search(self.db, "media", scopes=["homelab"])), [a])
+        self.assertEqual(set(self.ids(mem.search(self.db, "media", scopes=["laptop", "global"]))), {b, g})
+        self.assertEqual(len(mem.search(self.db, "media")), 3)
         self.assertEqual(len(mem.search(self.db, "media", type_="todo")), 1)
 
     def test_fts_follows_edits_and_deletes(self):
@@ -140,12 +145,19 @@ class TestIngest(TranscriptTest):
 
     def fake_claude(self, extract_items, resolve_decisions=()):
         def run(system, prompt, schema):
-            if schema is mem.EXTRACT_SCHEMA:
+            if "items" in schema["properties"]:
+                self.extract_schemas.append(schema)
                 return {"items": extract_items}, 0.001
             self.resolve_prompts.append(prompt)
             return {"decisions": list(resolve_decisions)}, 0.001
-        self.resolve_prompts = []
+        self.resolve_prompts, self.extract_schemas = [], []
         return mock.patch.object(mem, "run_claude", side_effect=run)
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(mem, "session_scope", return_value="homelab")
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def transcript(self, n=2):
         return self.write_transcript(
@@ -154,10 +166,10 @@ class TestIngest(TranscriptTest):
 
     def test_feedback_is_proposed_facts_are_active(self):
         items = [
-            {"text": "The media server runs on the homelab box", "type": "fact", "project": "homelab", "confidence": 0.9},
-            {"text": "Keep answers short", "type": "feedback", "project": "general", "confidence": 0.8},
-            {"text": "", "type": "fact", "project": "x", "confidence": 1},
-            {"text": "bad type", "type": "opinion", "project": "x", "confidence": 1},
+            {"text": "The media server runs on the homelab box", "type": "fact", "scope": "homelab", "confidence": 0.9},
+            {"text": "Keep answers short", "type": "feedback", "scope": "global", "confidence": 0.8},
+            {"text": "", "type": "fact", "scope": "x", "confidence": 1},
+            {"text": "bad type", "type": "opinion", "scope": "x", "confidence": 1},
         ]
         with self.fake_claude(items):
             added, skipped, sup, cost = mem.ingest(self.db, self.transcript(), "s1")
@@ -165,12 +177,31 @@ class TestIngest(TranscriptTest):
         statuses = {r["type"]: r["status"] for r in self.db.execute("SELECT * FROM memories")}
         self.assertEqual(statuses, {"fact": "active", "feedback": "proposed"})
         r = self.db.execute("SELECT * FROM memories WHERE type='fact'").fetchone()
-        self.assertEqual((r["source"], r["session_id"]), ("extract", "s1"))
+        self.assertEqual((r["source"], r["session_id"], r["scope"]), ("extract", "s1", "homelab"))
         self.assertEqual(r["created_at"], mem.local_time("2026-11-13T09:00:00Z"))
+        self.assertEqual(self.db.execute("SELECT scope FROM memories WHERE type='feedback'").fetchone()[0],
+                         "global")
+        self.assertEqual(self.extract_schemas[0]["properties"]["items"]["items"]["properties"]["scope"]["enum"],
+                         ["homelab", "global"])
+
+    def test_scope_is_forced_to_the_session_or_global(self):
+        item = [{"text": "A fact filed elsewhere", "type": "fact", "scope": "made-up", "confidence": 0.9}]
+        with self.fake_claude(item):
+            mem.ingest(self.db, self.transcript(), "s1")
+        self.assertEqual(self.db.execute("SELECT scope FROM memories").fetchone()[0], "homelab")
+
+    def test_resolve_only_compares_with_this_scope_and_global(self):
+        other = self.add("the backup job runs at night", scope="laptop")
+        item = [{"text": "the backup job runs at night on the server", "type": "fact", "scope": "homelab",
+                 "confidence": 0.9}]
+        with self.fake_claude(item):
+            self.assertEqual(mem.ingest(self.db, self.transcript(), "s1")[0], 1)
+        self.assertEqual(mem.get(self.db, other)["status"], "active")
+        self.assertEqual(self.resolve_prompts, [])
 
     def test_incremental(self):
         path = self.transcript(2)
-        item = [{"text": "Something new", "type": "fact", "project": "homelab", "confidence": 0.9}]
+        item = [{"text": "Something new", "type": "fact", "scope": "homelab", "confidence": 0.9}]
         with self.fake_claude(item) as run:
             mem.ingest(self.db, path, "s1")
             self.assertEqual(mem.ingest(self.db, path, "s1"), (0, 0, 0, 0.0))
@@ -183,9 +214,9 @@ class TestIngest(TranscriptTest):
         same = self.add("The media server reads from /mnt/hdd1 and /mnt/hdd2")
         items = [
             {"text": "the infra monorepo replaced the old-stacks repo",
-             "type": "fact", "project": "homelab", "confidence": 0.9},
+             "type": "fact", "scope": "homelab", "confidence": 0.9},
             {"text": "Media for the media server is on /mnt/hdd1 and /mnt/hdd2",
-             "type": "fact", "project": "homelab", "confidence": 0.9},
+             "type": "fact", "scope": "homelab", "confidence": 0.9},
         ]
         decisions = [{"new": 0, "duplicate_of": None, "supersedes": [old, 9999]},
                      {"new": 1, "duplicate_of": same, "supersedes": []}]
@@ -203,13 +234,13 @@ class TestIngest(TranscriptTest):
             {"type": "user", "entrypoint": "sdk-cli", "message": {"content": "scripted prompt"}},
             {"type": "assistant", "message": {"content": [{"type": "text", "text": "answer"}]}},
         ])
-        with self.fake_claude([{"text": "x", "type": "fact", "project": "p", "confidence": 1}]) as run:
+        with self.fake_claude([{"text": "x", "type": "fact", "scope": "p", "confidence": 1}]) as run:
             self.assertEqual(mem.ingest(self.db, path, "s1"), (0, 0, 0, 0.0))
         run.assert_not_called()
         self.assertEqual(self.db.execute("SELECT lines_done FROM ingested").fetchone()[0], 2)
 
     def test_dry_run_stores_nothing(self):
-        item = [{"text": "A fact", "type": "fact", "project": "homelab", "confidence": 0.9}]
+        item = [{"text": "A fact", "type": "fact", "scope": "homelab", "confidence": 0.9}]
         with self.fake_claude(item), redirect_stdout(io.StringIO()) as out:
             self.assertEqual(mem.ingest(self.db, self.transcript(), "s1", dry_run=True)[0], 1)
         self.assertIn("A fact", out.getvalue())
@@ -233,20 +264,135 @@ class TestIngest(TranscriptTest):
         self.run_ingest_hook("/nonexistent.jsonl")
         self.assertFalse(mem.LOG_PATH.exists() and "s1" in mem.LOG_PATH.read_text())
 
+    def session_start(self, cwd):
+        with mock.patch.object(sys, "stdin", io.StringIO(json.dumps({"cwd": str(cwd)}))), \
+                redirect_stdout(io.StringIO()) as out, mock.patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("MEM_NO_HOOK", None)
+            mem.cmd_session_start(self.db, None)
+        return out.getvalue()
+
     def test_session_start_note(self):
+        here = Path(self.tmp.name).resolve()
         self.add("a fact")
-        with mock.patch.object(sys, "stdin", io.StringIO("{}")), redirect_stdout(io.StringIO()) as out, \
-                mock.patch.dict("os.environ", {}, clear=False) as env:
-            env.pop("MEM_NO_HOOK", None)
-            mem.cmd_session_start(self.db, None)
-        self.assertIn("1 memories", out.getvalue())
-        self.assertNotIn("proposed", out.getvalue())
-        self.add("be brief", "feedback", "general", status="proposed")
-        with mock.patch.object(sys, "stdin", io.StringIO("{}")), redirect_stdout(io.StringIO()) as out, \
-                mock.patch.dict("os.environ", {}, clear=False) as env:
-            env.pop("MEM_NO_HOOK", None)
-            mem.cmd_session_start(self.db, None)
-        self.assertIn("1 proposed", out.getvalue())
+        out = self.session_start(here)
+        self.assertIn("1 memories", out)
+        self.assertIn(f"scope is `{here}`", out)
+        self.assertNotIn("proposed", out)
+        self.add("be brief", "feedback", "global", status="proposed")
+        self.assertIn("1 proposed", self.session_start(here))
+
+    def test_session_start_loads_global_and_own_rules_and_lists_other_scopes(self):
+        here = str(Path(self.tmp.name).resolve())
+        self.add("Answer in short paragraphs", "feedback", "global")
+        self.add("Run the tests before committing here", "preference", here)
+        self.add("Deploy with the blue-green script", "preference", "webshop")
+        self.add("The webshop runs on port 8080", "fact", "webshop")
+        self.add("Not approved yet", "feedback", here, status="proposed")
+        self.add("A fact of this scope", "fact", here)
+        out = self.session_start(here)
+        self.assertIn("- Answer in short paragraphs", out)
+        self.assertIn("- Run the tests before committing here", out)
+        self.assertNotIn("blue-green", out)          # another scope's rule is never loaded
+        self.assertNotIn("Not approved yet", out)
+        self.assertNotIn("A fact of this scope", out)  # facts are searched, not loaded
+        self.assertIn("`webshop` (2)", out)
+        self.assertIn("never as a rule", out)
+
+    def test_session_start_caps_the_rules(self):
+        here = str(Path(self.tmp.name).resolve())
+        for i in range(mem.RULES_SHOWN + 3):
+            self.add(f"rule number {i}", "feedback", here)
+        out = self.session_start(here)
+        self.assertEqual(out.count("- rule number"), mem.RULES_SHOWN)
+        self.assertIn("3 more", out)
+
+    def test_search_defaults_to_this_scope_and_global_and_marks_others(self):
+        here = str(Path(self.tmp.name).resolve())
+        self.add("nginx config lives in the repo", scope=here)
+        self.add("nginx is preferred over apache", "preference", "global")
+        self.add("nginx on the webshop box", scope="webshop")
+
+        def run(*argv):
+            a = mock.Mock(query=["nginx"], scope=None, all_scopes=False, type=None, limit=10, all=False, full=False)
+            for k, v in argv:
+                setattr(a, k, v)
+            with mock.patch.dict("os.environ", {"CLAUDE_PROJECT_DIR": here}), \
+                    redirect_stdout(io.StringIO()) as out:
+                mem.cmd_search(self.db, a)
+            return out.getvalue()
+        out = run()
+        self.assertIn("config lives", out)
+        self.assertIn("preferred over apache", out)
+        self.assertNotIn("webshop", out)
+        out = run(("all_scopes", True))
+        self.assertIn("nginx/webshop", out.replace("fact/webshop", "nginx/webshop"))
+        self.assertIn("(other scope)", out)
+        self.assertIn("not a rule", out)
+        out = run(("scope", ["webshop"]))
+        self.assertEqual(out.count("#"), 1)
+
+    def test_old_store_is_migrated(self):
+        old = Path(self.tmp.name) / "old.db"
+        db = sqlite3.connect(old)
+        db.executescript(mem.SCHEMA.replace("scope", "project").replace("'global'", "'general'"))
+        db.execute("INSERT INTO memories (text, type, project) VALUES ('be brief', 'feedback', 'general')")
+        db.execute("INSERT INTO memories (text, type, project) VALUES ('grub on sda', 'fact', 'homelab')")
+        db.commit()
+        db.close()
+        with mock.patch.object(mem, "DB_PATH", old):
+            db = mem.connect()
+        self.addCleanup(db.close)
+        self.assertEqual([tuple(r) for r in db.execute("SELECT text, scope FROM memories ORDER BY id")],
+                         [("be brief", "global"), ("grub on sda", "homelab")])
+        self.assertEqual(len(mem.search(db, "grub")), 1)
+        db.execute("UPDATE memories SET text = 'grub on sdb' WHERE id = 2")
+        self.assertEqual(len(mem.search(db, "sdb")), 1)  # triggers recreated
+
+
+
+class TestScopes(TranscriptTest):
+    def test_session_scope_comes_from_the_transcript_cwd(self):
+        folder = Path(self.tmp.name).resolve() / "work"
+        folder.mkdir()
+        path = self.write_transcript([{"type": "mode"}, {"type": "user", "cwd": str(folder),
+                                                          "message": {"content": "hi"}}])
+        self.assertEqual(mem.session_scope(path), str(folder))
+        bare = self.write_transcript([{"type": "user", "message": {"content": "hi"}}])
+        self.assertEqual(mem.session_scope(bare), bare.parent.name)
+
+    def test_session_folder_is_the_one_claude_code_files_the_transcript_under(self):
+        root = Path(self.tmp.name).resolve()
+        project = root / "my.project"
+        (root / "elsewhere").mkdir()
+        project.mkdir()
+        folder = root / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(project))
+        folder.mkdir(parents=True)
+        path = folder / "s.jsonl"
+        lines = [{"cwd": str(root / "elsewhere")}] * 5 + [{"cwd": str(project)}]  # resumed from my.project
+        path.write_text("\n".join(json.dumps(x) for x in lines) + "\n")
+        self.assertEqual(mem.session_cwd(path), str(project))
+        other = root / "projects" / "unrelated"
+        other.mkdir()
+        (other / "s.jsonl").write_text(path.read_text())
+        self.assertEqual(mem.session_cwd(other / "s.jsonl"), str(root / "elsewhere"))  # most frequent
+
+    def test_rescope_moves_memories_to_their_session_scope(self):
+        folder = Path(self.tmp.name).resolve() / "work"
+        folder.mkdir()
+        path = self.write_transcript([{"type": "user", "cwd": str(folder), "message": {"content": "hi"}}])
+        mem.mark_ingested(self.db, "s1", str(path), 1)
+        moved = self.add("a fact", scope="homelab", session_id="s1")
+        kept = self.add("be brief", "feedback", "global", session_id="s1")
+        orphan = self.add("added by hand", scope="homelab")
+        with redirect_stdout(io.StringIO()) as out:
+            mem.cmd_rescope(self.db, mock.Mock(apply=False))
+        self.assertIn(f"homelab -> {folder}: 1", out.getvalue())
+        self.assertIn("added by hand", out.getvalue())
+        self.assertEqual(mem.get(self.db, moved)["scope"], "homelab")  # dry run
+        with redirect_stdout(io.StringIO()):
+            mem.cmd_rescope(self.db, mock.Mock(apply=True))
+        self.assertEqual([mem.get(self.db, i)["scope"] for i in (moved, kept, orphan)],
+                         [str(folder), "global", "homelab"])
 
     def test_prompts_use_the_configured_user(self):
         conf = Path(self.tmp.name) / "user.conf"

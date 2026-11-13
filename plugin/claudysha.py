@@ -5,6 +5,7 @@
   folder path and who the user is;
 - the data folder (~/.claudysha by default; CLAUDYSHA_HOME overrides it), where every
   module keeps its data, and a lock modules take while writing;
+- the scope of a session: which repository (or folder) it works in;
 - setup and init (each module in MODULES creates its own part of the data folder);
 - archive and load of the whole data folder.
 """
@@ -25,7 +26,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_HOME = "~/.claudysha"
-DEFAULTS = {"home": DEFAULT_HOME, "user_name": "the user", "user_pronouns": "they/them", "projects": ""}
+DEFAULTS = {"home": DEFAULT_HOME, "user_name": "the user", "user_pronouns": "they/them"}
+GLOBAL_SCOPE = "global"
 ARCHIVE_FORMAT = 1
 MANIFEST = "claudysha-archive.json"
 CONFIRM_WORD = "erase"
@@ -70,11 +72,6 @@ def user_pronouns():
     return setting("user_pronouns")
 
 
-def projects():
-    """Projects the extractor should prefer when filing memories."""
-    return [p.strip() for p in setting("projects").split(",") if p.strip()]
-
-
 def home():
     raw = os.environ.get("CLAUDYSHA_HOME") or setting("home")
     return Path(os.path.expandvars(raw)).expanduser()
@@ -92,6 +89,42 @@ def home_lock(exclusive=False):
             yield
         finally:
             fcntl.flock(f, fcntl.LOCK_UN)
+
+
+# ---------------------------------------------------------------- scope
+
+def _git(folder, *args):
+    try:
+        out = subprocess.run(["git", "-C", str(folder), *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
+
+
+def repo_name(url):
+    """'https://host/owner/name.git' or 'git@host:owner/name.git' -> 'name'."""
+    name = url.rstrip("/").replace(":", "/").rsplit("/", 1)[-1]
+    return name[:-4] if name.endswith(".git") else name
+
+
+def scope_of(folder):
+    """The scope of a session working in `folder`.
+
+    Inside a git repository: the repository's name, from its `origin` remote (so a clone
+    elsewhere keeps the same scope), else the name of its top folder. Outside one: the
+    folder's absolute path. Never GLOBAL_SCOPE, which is for what holds in every session.
+    """
+    folder = Path(folder).expanduser().resolve()
+    top = _git(folder, "rev-parse", "--show-toplevel") if folder.is_dir() else None
+    if not top:
+        return str(folder)
+    url = _git(top, "remote", "get-url", "origin")
+    return (repo_name(url) if url else "") or Path(top).name
+
+
+def current_scope():
+    """Scope of the running session: CLAUDE_PROJECT_DIR (set by Claude Code), else the current folder."""
+    return scope_of(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
 
 
 # ---------------------------------------------------------------- modules
@@ -114,7 +147,6 @@ SETUP_QUESTIONS = [
     ("home", "Where should claudysha keep its data (notes, memory database, backups)?", DEFAULT_HOME),
     ("user_name", "What name should Claude use for you?", None),
     ("user_pronouns", "Your pronouns (used in the memory prompts)?", "they/them"),
-    ("projects", "Projects you work on, comma-separated, to file memories under (optional)?", ""),
 ]
 
 
@@ -128,9 +160,7 @@ def render_config(values):
         f"home = {v['home']}\n\n"
         "# Who Claude works with. Used by the modules (prompts, session notes).\n"
         f"user_name = {v['user_name']}\n"
-        f"user_pronouns = {v['user_pronouns']}\n\n"
-        "# Memory module: projects to file memories under, comma-separated (optional).\n"
-        f"projects = {v['projects']}\n"
+        f"user_pronouns = {v['user_pronouns']}\n"
     )
 
 

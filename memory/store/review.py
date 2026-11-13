@@ -60,7 +60,7 @@ def render(r, pos, total, source, related, st, width):
     lines = [
         st.dim("─" * 3 + head + "─" * (width - 3 - len(head))),
         "  " + "  ·  ".join([
-            st.bold(st.magenta(r["type"])), st.cyan(r["project"]), r["created_at"][:10],
+            st.bold(st.magenta(r["type"])), st.cyan(r["scope"]), r["created_at"][:10],
             f"confidence {r['confidence']:.1f}", st.dim(f"#{r['id']}")]),
         "",
         wrap(r["text"]),

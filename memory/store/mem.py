@@ -30,7 +30,9 @@ PROMPT_PATH = ROOT / "prompts" / "extract.md"
 EXTRACT_MODEL = os.environ.get("MEM_EXTRACT_MODEL", "haiku")
 CHUNK_CHARS = 80_000  # transcript text per extraction call
 EVERY_LINES = 300     # Stop hook: extract once this many new transcript lines piled up
-DEFAULT_PROJECTS = ["general"]  # plus `projects` from the config
+GLOBAL = claudysha.GLOBAL_SCOPE  # the scope of memories that hold in every session
+RULES_SHOWN = 15                 # session start: approved preferences/feedback shown per scope
+OTHER_SCOPES_SHOWN = 20          # session start: other scopes listed
 
 TYPES = ["fact", "decision", "dead_end", "event", "todo", "preference", "feedback"]
 # Types that shape how Claude behaves: extracted ones wait for the user's OK.
@@ -41,7 +43,7 @@ CREATE TABLE IF NOT EXISTS memories (
     id            INTEGER PRIMARY KEY,
     text          TEXT NOT NULL,
     type          TEXT NOT NULL,
-    project       TEXT NOT NULL DEFAULT 'general',
+    scope         TEXT NOT NULL DEFAULT 'global',    -- repository name, folder path, or global
     tags          TEXT NOT NULL DEFAULT '',
     confidence    REAL NOT NULL DEFAULT 0.7,
     status        TEXT NOT NULL DEFAULT 'active'
@@ -54,23 +56,23 @@ CREATE TABLE IF NOT EXISTS memories (
     use_count     INTEGER NOT NULL DEFAULT 0,
     meta          TEXT NOT NULL DEFAULT '{}'        -- free-form JSON
 );
-CREATE INDEX IF NOT EXISTS memories_status ON memories(status, project, type);
+CREATE INDEX IF NOT EXISTS memories_status ON memories(status, scope, type);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-    text, tags, project, content='memories', content_rowid='id',
+    text, tags, scope, content='memories', content_rowid='id',
     tokenize="unicode61 tokenchars '_'"
 );
 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, text, tags, project) VALUES (new.id, new.text, new.tags, new.project);
+    INSERT INTO memories_fts(rowid, text, tags, scope) VALUES (new.id, new.text, new.tags, new.scope);
 END;
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, text, tags, project)
-    VALUES ('delete', old.id, old.text, old.tags, old.project);
+    INSERT INTO memories_fts(memories_fts, rowid, text, tags, scope)
+    VALUES ('delete', old.id, old.text, old.tags, old.scope);
 END;
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF text, tags, project ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, text, tags, project)
-    VALUES ('delete', old.id, old.text, old.tags, old.project);
-    INSERT INTO memories_fts(rowid, text, tags, project) VALUES (new.id, new.text, new.tags, new.project);
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF text, tags, scope ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, text, tags, scope)
+    VALUES ('delete', old.id, old.text, old.tags, old.scope);
+    INSERT INTO memories_fts(rowid, text, tags, scope) VALUES (new.id, new.text, new.tags, new.scope);
 END;
 
 -- How far each transcript has been read, so extraction is incremental.
@@ -103,8 +105,34 @@ def connect():
     db = sqlite3.connect(DB_PATH, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
+    migrate(db)
     db.executescript(SCHEMA)
     return db
+
+
+def migrate(db):
+    """Stores made before scopes used a free-form `project` label: rename it to `scope` and
+    'general' to 'global'. `mem rescope` then files the rest by the folder of their session."""
+    def old_layout():
+        return "project" in {r[1] for r in db.execute("PRAGMA table_info(memories)")}
+    if not old_layout():
+        return
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        if old_layout():  # another process may have migrated while we waited
+            for stmt in ("DROP TRIGGER IF EXISTS memories_ai", "DROP TRIGGER IF EXISTS memories_ad",
+                         "DROP TRIGGER IF EXISTS memories_au", "DROP TABLE IF EXISTS memories_fts",
+                         "DROP INDEX IF EXISTS memories_status",
+                         "ALTER TABLE memories RENAME COLUMN project TO scope"):
+                db.execute(stmt)
+            db.execute("UPDATE memories SET scope = ? WHERE scope = 'general'", (GLOBAL,))
+            db.commit()
+            db.executescript(SCHEMA)
+            db.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
 
 
 def log(msg):
@@ -125,7 +153,8 @@ def fts_query(text):
     return " OR ".join(f'"{t}"' for t in terms)
 
 
-def search(db, query, project=None, type_=None, limit=10, include_old=False):
+def search(db, query, scopes=None, type_=None, limit=10, include_old=False):
+    """Full-text search. `scopes`: a list to search only those, None for every scope."""
     q = fts_query(query)
     if not q:
         return []
@@ -135,9 +164,9 @@ def search(db, query, project=None, type_=None, limit=10, include_old=False):
     args = [q]
     if not include_old:
         sql += " AND m.status IN ('active', 'proposed')"
-    if project:
-        sql += " AND m.project = ?"
-        args.append(project)
+    if scopes is not None:
+        sql += f" AND m.scope IN ({','.join('?' * len(scopes))})"
+        args.extend(scopes)
     if type_:
         sql += " AND m.type = ?"
         args.append(type_)
@@ -160,13 +189,17 @@ def mark_used(db, rows):
     db.commit()
 
 
-def fmt(r, full=False):
+def fmt(r, full=False, here=None):
+    """One memory as text. With `here` (the session's scope), memories from another scope
+    are marked: they describe that place, they're not rules for this one."""
     flags = ""
     if r["status"] != "active":
         flags = f" {r['status'].upper()}"
         if r["superseded_by"]:
             flags += f"→#{r['superseded_by']}"
-    head = f"#{r['id']} [{r['type']}/{r['project']} {r['created_at'][:10]} c{r['confidence']:.1f}{flags}]"
+    head = f"#{r['id']} [{r['type']}/{r['scope']} {r['created_at'][:10]} c{r['confidence']:.1f}{flags}]"
+    if here and r["scope"] not in (here, GLOBAL):
+        head += " (other scope)"
     if not full:
         return f"{head} {r['text']}"
     lines = [head, r["text"]]
@@ -181,23 +214,23 @@ def fmt(r, full=False):
 
 # ---------------------------------------------------------------- writing
 
-def similar_existing(db, text, project, threshold=0.82):
-    """Return an active/proposed memory that says nearly the same thing, if any."""
-    for r in search(db, text, project=project, limit=5):
+def similar_existing(db, text, scope, threshold=0.82):
+    """Return an active/proposed memory of that scope that says nearly the same thing, if any."""
+    for r in search(db, text, scopes=[scope or GLOBAL], limit=5):
         if difflib.SequenceMatcher(None, r["text"].lower(), text.lower()).ratio() >= threshold:
             return r
     return None
 
 
-def insert(db, text, type_, project="general", tags="", confidence=0.7,
+def insert(db, text, type_, scope=GLOBAL, tags="", confidence=0.7,
            status="active", source="manual", session_id=None, meta=None, created_at=None):
     if type_ not in TYPES:
         raise SystemExit(f"unknown type {type_!r}, use one of: {', '.join(TYPES)}")
     cur = db.execute(
-        """INSERT INTO memories (text, type, project, tags, confidence, status, source, session_id, meta,
+        """INSERT INTO memories (text, type, scope, tags, confidence, status, source, session_id, meta,
                                  created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (text.strip(), type_, project or "general", tags.strip().lower(), confidence,
+        (text.strip(), type_, scope or GLOBAL, tags.strip().lower(), confidence,
          status, source, session_id, json.dumps(meta or {}), created_at or now()),
     )
     db.commit()
@@ -260,6 +293,40 @@ def condense(transcript_path, start_line):
     return "\n\n".join(parts), n, date, humans
 
 
+def session_cwd(transcript_path):
+    """The folder the session worked in, or None.
+
+    Claude Code files a transcript under ~/.claude/projects/<project folder, with every
+    character but letters and digits turned into '-'>. Among the folders the transcript
+    records (`cwd`, which follows the shell), the one matching that name is the session's
+    folder, even when the session was resumed from another one. Else the most frequent.
+    """
+    seen = {}
+    try:
+        with open(transcript_path) as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(d, dict) and isinstance(d.get("cwd"), str) and d["cwd"]:
+                    seen[d["cwd"]] = seen.get(d["cwd"], 0) + 1
+    except OSError:
+        return None
+    folder = Path(transcript_path).parent.name
+    for cwd in seen:
+        if re.sub(r"[^A-Za-z0-9]", "-", cwd) == folder:
+            return cwd
+    return max(seen, key=seen.get) if seen else None
+
+
+def session_scope(transcript_path):
+    """The scope of the session behind a transcript (see claudysha.scope_of)."""
+    cwd = session_cwd(transcript_path)
+    # No cwd recorded (very old transcripts): Claude Code's own folder name for the project.
+    return claudysha.scope_of(cwd) if cwd else Path(transcript_path).parent.name
+
+
 def chunks(text, size=CHUNK_CHARS):
     while text:
         if len(text) <= size:
@@ -271,21 +338,22 @@ def chunks(text, size=CHUNK_CHARS):
         text = text[cut:].lstrip()
 
 
-EXTRACT_SCHEMA = {
-    "type": "object",
-    "properties": {"items": {"type": "array", "items": {
+def extract_schema(scope):
+    return {
         "type": "object",
-        "properties": {
-            "text": {"type": "string"},
-            "type": {"type": "string", "enum": TYPES},
-            "project": {"type": "string"},
-            "tags": {"type": "array", "items": {"type": "string"}},
-            "confidence": {"type": "number"},
-        },
-        "required": ["text", "type", "project", "confidence"],
-    }}},
-    "required": ["items"],
-}
+        "properties": {"items": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "type": {"type": "string", "enum": TYPES},
+                "scope": {"type": "string", "enum": [scope, GLOBAL]},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "confidence": {"type": "number"},
+            },
+            "required": ["text", "type", "scope", "confidence"],
+        }}},
+        "required": ["items"],
+    }
 
 
 RESOLVE_SCHEMA = {
@@ -326,22 +394,22 @@ def run_claude(system, prompt, schema):
     return out.get("structured_output") or {}, out.get("total_cost_usd", 0) or 0
 
 
-def call_model(excerpt, date, projects):
+def call_model(excerpt, date, scope):
     prompt = (f"Excerpt date: {(date or 'unknown')[:10]}\n"
-              f"Known projects: {', '.join(projects)}\n\n"
+              f"This session's scope: {scope}\n\n"
               f"<excerpt>\n{excerpt}\n</excerpt>\n\nExtract the memories.")
-    out, cost = run_claude(prompt_text(PROMPT_PATH), prompt, EXTRACT_SCHEMA)
+    out, cost = run_claude(prompt_text(PROMPT_PATH), prompt, extract_schema(scope))
     return out.get("items", []), cost
 
 
-def resolve(db, items, date):
-    """Compare new items with the closest stored memories.
+def resolve(db, items, date, scopes):
+    """Compare new items with the closest stored memories of these scopes.
 
     Returns ({new_index: duplicate_id}, {new_index: [superseded ids]}, cost).
     """
     blocks, known = [], set()
     for i, it in enumerate(items):
-        near = search(db, it["text"], limit=4)
+        near = search(db, it["text"], scopes=scopes, limit=4)
         if not near:
             continue
         known.update(r["id"] for r in near)
@@ -391,33 +459,34 @@ def ingest(db, transcript_path, session_id, dry_run=False):
             if not dry_run:
                 mark_ingested(db, session_id, transcript_path, last_line)
             return 0, 0, 0, 0.0
-        projects = sorted(set(DEFAULT_PROJECTS) | set(claudysha.projects()) | {
-            r[0] for r in db.execute("SELECT DISTINCT project FROM memories")})
+        scope = session_scope(transcript_path)
         added = skipped = superseded = 0
         cost = 0.0
         for part in chunks(text):
-            items, c = call_model(part, date, projects)
+            items, c = call_model(part, date, scope)
             cost += c
             items = [it for it in items
                      if (it.get("text") or "").strip() and it.get("type") in TYPES]
+            for it in items:
+                it["scope"] = GLOBAL if it.get("scope") == GLOBAL else scope
             if dry_run:
                 for it in items:
-                    print(f"[{it['type']}/{it.get('project')} c{it.get('confidence', 0):.1f}] {it['text']}")
+                    print(f"[{it['type']}/{it['scope']} c{it.get('confidence', 0):.1f}] {it['text']}")
                 added += len(items)
                 continue
-            dups, sups, c = resolve(db, items, date)
+            dups, sups, c = resolve(db, items, date, [scope, GLOBAL])
             cost += c
             for i, it in enumerate(items):
                 body = it["text"].strip()
                 dup_id = dups.get(i)
                 if dup_id is None:
-                    dup = similar_existing(db, body, it.get("project"))
+                    dup = similar_existing(db, body, it["scope"])
                     dup_id = dup["id"] if dup else None
                 if dup_id is not None:
                     skipped += 1
                     db.execute("UPDATE memories SET use_count = use_count + 1 WHERE id = ?", (dup_id,))
                     continue
-                new_id = insert(db, body, it["type"], it.get("project") or "general",
+                new_id = insert(db, body, it["type"], it["scope"],
                                 " ".join(it.get("tags") or []),
                                 max(0.0, min(1.0, float(it.get("confidence", 0.6)))),
                                 status="proposed" if it["type"] in NEEDS_APPROVAL else "active",
@@ -440,23 +509,28 @@ def ingest(db, transcript_path, session_id, dry_run=False):
 # ---------------------------------------------------------------- commands
 
 def cmd_search(db, a):
-    rows = search(db, " ".join(a.query), a.project, a.type, a.limit, a.all)
+    here = claudysha.current_scope()
+    scopes = None if a.all_scopes else (a.scope or [here, GLOBAL])
+    rows = search(db, " ".join(a.query), scopes, a.type, a.limit, a.all)
     for r in rows:
-        print(fmt(r, a.full))
+        print(fmt(r, a.full, here))
         if a.full:
             print()
     if not rows:
-        print("(no match)")
+        print("(no match" + ("" if scopes is None else f" in {', '.join(scopes)}; -A searches every scope") + ")")
+    elif any(r["scope"] not in (here, GLOBAL) for r in rows):
+        print(f"(other scope: describes another repository or folder, not a rule for `{here}`)")
     mark_used(db, rows)
 
 
 def cmd_add(db, a):
-    dup = None if a.force else similar_existing(db, a.text, a.project)
+    scope = a.scope or claudysha.current_scope()
+    dup = None if a.force else similar_existing(db, a.text, scope)
     if dup:
         print(f"skipped, already stored:\n{fmt(dup)}\n(use --force to add anyway, or `mem supersede {dup['id']} ...`)")
         return
-    id_ = insert(db, a.text, a.type, a.project, a.tags, a.confidence)
-    print(f"added #{id_}")
+    id_ = insert(db, a.text, a.type, scope, a.tags, a.confidence)
+    print(f"added #{id_} ({scope})")
 
 
 def cmd_get(db, a):
@@ -470,9 +544,9 @@ def cmd_list(db, a):
     args = []
     if not a.all:
         sql += " AND status IN ('active', 'proposed')"
-    if a.project:
-        sql += " AND project = ?"
-        args.append(a.project)
+    if a.scope:
+        sql += " AND scope = ?"
+        args.append(a.scope)
     if a.type:
         sql += " AND type = ?"
         args.append(a.type)
@@ -489,7 +563,7 @@ def cmd_supersede(db, a):
     else:
         if not a.text:
             raise SystemExit("give the new text, or --by ID")
-        new_id = insert(db, a.text, a.type or old["type"], a.project or old["project"],
+        new_id = insert(db, a.text, a.type or old["type"], a.scope or old["scope"],
                         old["tags"], old["confidence"])
     db.execute("UPDATE memories SET status = 'superseded', superseded_by = ? WHERE id = ?", (new_id, old["id"]))
     db.commit()
@@ -510,8 +584,8 @@ def cmd_set_status(status):
 def cmd_edit(db, a):
     r = get(db, a.id)
     db.execute(
-        "UPDATE memories SET text = ?, type = ?, project = ?, tags = ?, confidence = ? WHERE id = ?",
-        (a.text or r["text"], a.type or r["type"], a.project or r["project"],
+        "UPDATE memories SET text = ?, type = ?, scope = ?, tags = ?, confidence = ? WHERE id = ?",
+        (a.text or r["text"], a.type or r["type"], a.scope or r["scope"],
          a.tags if a.tags is not None else r["tags"],
          a.confidence if a.confidence is not None else r["confidence"], r["id"]),
     )
@@ -520,16 +594,16 @@ def cmd_edit(db, a):
 
 
 def cmd_review(db, a):
-    rows = db.execute("SELECT * FROM memories WHERE status = 'proposed' ORDER BY project, type, id").fetchall()
+    rows = db.execute("SELECT * FROM memories WHERE status = 'proposed' ORDER BY scope, type, id").fetchall()
     if not rows:
         print("nothing to review")
         return
     if a.list or not sys.stdin.isatty():
-        project = None
+        scope = None
         for r in rows:
-            if r["project"] != project:
-                project = r["project"]
-                print(f"\n## {project}")
+            if r["scope"] != scope:
+                scope = r["scope"]
+                print(f"\n## {scope}")
             print(f"\n#{r['id']} {r['type']}, {r['created_at'][:10]}, confidence {r['confidence']:.1f}")
             print(textwrap.fill(r["text"], 100, initial_indent="  ", subsequent_indent="  "))
         print(f"\n{len(rows)} proposed. Review them one by one with `mem review` in a terminal.")
@@ -610,21 +684,87 @@ def cmd_hook(db, a):
         proc.stdin.close()
 
 
-def cmd_session_start(db, a):
-    """SessionStart hook: a short note so every session knows the store exists."""
-    if os.environ.get("MEM_NO_HOOK"):
-        return
-    with contextlib.suppress(Exception):
-        sys.stdin.read()  # the hook JSON; not needed
+def rules(db, scope):
+    """Approved preferences and feedback of a scope, the most confident first."""
+    return db.execute(
+        f"""SELECT * FROM memories WHERE scope = ? AND status = 'active'
+            AND type IN ({','.join('?' * len(NEEDS_APPROVAL))})
+            ORDER BY confidence DESC, id DESC""", (scope, *sorted(NEEDS_APPROVAL))).fetchall()
+
+
+def session_note(db, here):
+    """What the SessionStart hook prints for a session in scope `here`."""
+    user = claudysha.user_name()
     active, proposed = db.execute(
         """SELECT COUNT(*) FILTER (WHERE status = 'active'),
                   COUNT(*) FILTER (WHERE status = 'proposed') FROM memories""").fetchone()
-    note = (f"Long-term memory: {active} memories from past sessions are stored in the claudysha plugin. "
-            "Search them (claudysha:recall skill) before answering about past work or redoing something.")
+    out = [f"Long-term memory: {active} memories from past sessions are stored in the claudysha plugin. "
+           f"This session's scope is `{here}` (the repository, or else the folder, it works in). "
+           "Search them (claudysha:recall skill) before answering about past work or redoing something: "
+           "a search covers this scope and `global` by default."]
+    for scope, title in ((GLOBAL, f"{user}'s preferences and feedback for every session (global)"),
+                         (here, f"{user}'s preferences and feedback for `{here}`")):
+        rows = rules(db, scope)
+        if not rows:
+            continue
+        out.append(f"\n{title}:")
+        out += [f"- {r['text']} (#{r['id']})" for r in rows[:RULES_SHOWN]]
+        if len(rows) > RULES_SHOWN:
+            out.append(f"- ... {len(rows) - RULES_SHOWN} more: `mem list -s {scope} -t preference` "
+                       "and `-t feedback`")
+    others = db.execute("""SELECT scope, COUNT(*) FROM memories WHERE status = 'active' AND scope NOT IN (?, ?)
+                           GROUP BY scope ORDER BY COUNT(*) DESC""", (here, GLOBAL)).fetchall()
+    if others:
+        listed = ", ".join(f"`{s}` ({n})" for s, n in others[:OTHER_SCOPES_SHOWN])
+        more = f" and {len(others) - OTHER_SCOPES_SHOWN} more" if len(others) > OTHER_SCOPES_SHOWN else ""
+        out.append(f"\nOther scopes in the store: {listed}{more}. Search one when it may help "
+                   "(`mem search <words> -s <scope>`, or `-A` for all), but what you find there describes "
+                   "that repository or folder: use it as information, never as a rule for this session.")
     if proposed:
-        note += (f" {proposed} proposed memories are waiting for {claudysha.user_name()}'s review: "
-                 "mention it once (/claudysha:memory-review).")
-    print(note)
+        out.append(f"\n{proposed} proposed memories are waiting for {user}'s review: "
+                   "mention it once (/claudysha:memory-review).")
+    return "\n".join(out)
+
+
+def cmd_session_start(db, a):
+    """SessionStart hook: the store, this scope's rules, and the other scopes."""
+    if os.environ.get("MEM_NO_HOOK"):
+        return
+    data = {}
+    with contextlib.suppress(Exception):
+        data = json.loads(sys.stdin.read())  # the hook JSON: its `cwd` is the session's folder
+    cwd = data.get("cwd") if isinstance(data, dict) else None
+    print(session_note(db, claudysha.scope_of(cwd) if cwd else claudysha.current_scope()))
+
+
+def cmd_rescope(db, a):
+    """File every memory not in `global` under the scope of the session it came from."""
+    scopes = {}
+    for r in db.execute("SELECT session_id, transcript_path FROM ingested"):
+        if Path(r["transcript_path"]).exists() and session_cwd(r["transcript_path"]):
+            scopes[r["session_id"]] = session_scope(r["transcript_path"])
+    moves, changes, unresolved = {}, [], []
+    for r in db.execute("SELECT * FROM memories WHERE scope != ? ORDER BY id", (GLOBAL,)):
+        new = scopes.get(r["session_id"])
+        if new is None:
+            unresolved.append(r)
+        elif new != r["scope"]:
+            changes.append((new, r["id"]))
+            moves[(r["scope"], new)] = moves.get((r["scope"], new), 0) + 1
+    for (old, new), n in sorted(moves.items()):
+        print(f"  {old} -> {new}: {n}")
+    if not moves:
+        print("  nothing to move")
+    if unresolved:
+        print(f"\n{len(unresolved)} without a session transcript (scope kept; fix with `mem edit <id> -s <scope>`):")
+        for r in unresolved:
+            print(f"  {fmt(r)[:160]}")
+    if a.apply:
+        db.executemany("UPDATE memories SET scope = ? WHERE id = ?", changes)
+        db.commit()
+        print(f"\nmoved {len(changes)} memories")
+    elif changes:
+        print(f"\ndry run: {len(changes)} memories would move. Run again with --apply.")
 
 
 def cmd_backfill(db, a):
@@ -644,8 +784,8 @@ def cmd_stats(db, a):
     print(f"db: {DB_PATH}")
     for row in db.execute("SELECT status, COUNT(*) FROM memories GROUP BY status"):
         print(f"  {row[0]}: {row[1]}")
-    print("by project/type (active + proposed):")
-    for row in db.execute("""SELECT project, type, COUNT(*) FROM memories
+    print("by scope/type (active + proposed):")
+    for row in db.execute("""SELECT scope, type, COUNT(*) FROM memories
                              WHERE status IN ('active','proposed') GROUP BY 1, 2 ORDER BY 1, 2"""):
         print(f"  {row[0]:<16} {row[1]:<11} {row[2]}")
     print(f"transcripts ingested: {db.execute('SELECT COUNT(*) FROM ingested').fetchone()[0]}")
@@ -662,7 +802,9 @@ def main():
 
     s = sub.add_parser("search", help="full-text search (words OR-ed, exact tokens kept)")
     s.add_argument("query", nargs="+")
-    s.add_argument("-p", "--project")
+    s.add_argument("-s", "--scope", action="append",
+                   help="search this scope (repeatable; default: this session's scope and global)")
+    s.add_argument("-A", "--all-scopes", action="store_true", help="search every scope")
     s.add_argument("-t", "--type", choices=TYPES)
     s.add_argument("-n", "--limit", type=int, default=10)
     s.add_argument("-a", "--all", action="store_true", help="include superseded and rejected")
@@ -672,7 +814,7 @@ def main():
     s = sub.add_parser("add", help="store a memory")
     s.add_argument("text")
     s.add_argument("-t", "--type", choices=TYPES, default="fact")
-    s.add_argument("-p", "--project", default="general")
+    s.add_argument("-s", "--scope", help=f"default: this session's scope; {GLOBAL} for every session")
     s.add_argument("--tags", default="")
     s.add_argument("-c", "--confidence", type=float, default=0.9)
     s.add_argument("--force", action="store_true", help="add even if a near-duplicate exists")
@@ -683,7 +825,7 @@ def main():
     s.set_defaults(fn=cmd_get)
 
     s = sub.add_parser("list", help="latest memories")
-    s.add_argument("-p", "--project")
+    s.add_argument("-s", "--scope")
     s.add_argument("-t", "--type", choices=TYPES)
     s.add_argument("-n", "--limit", type=int, default=20)
     s.add_argument("-a", "--all", action="store_true")
@@ -694,14 +836,14 @@ def main():
     s.add_argument("text", nargs="?")
     s.add_argument("--by", type=int, help="existing memory that replaces it")
     s.add_argument("-t", "--type", choices=TYPES)
-    s.add_argument("-p", "--project")
+    s.add_argument("-s", "--scope")
     s.set_defaults(fn=cmd_supersede)
 
     s = sub.add_parser("edit", help="change a memory in place")
     s.add_argument("id", type=int)
     s.add_argument("--text")
     s.add_argument("-t", "--type", choices=TYPES)
-    s.add_argument("-p", "--project")
+    s.add_argument("-s", "--scope")
     s.add_argument("--tags")
     s.add_argument("-c", "--confidence", type=float)
     s.set_defaults(fn=cmd_edit)
@@ -723,12 +865,16 @@ def main():
     s.set_defaults(fn=cmd_ingest)
 
     s = sub.add_parser("backfill", help="ingest every transcript under ~/.claude/projects")
-    s.add_argument("--project-dir", help="only this folder, e.g. -home-nevysha-brain")
+    s.add_argument("--project-dir", help="only this folder, e.g. -home-me-code")
     s.set_defaults(fn=cmd_backfill)
 
     sub.add_parser("hook", help="for Claude Code hooks: run ingest in the background").set_defaults(fn=cmd_hook)
-    sub.add_parser("session-start", help="for the SessionStart hook: print a short note").set_defaults(
+    sub.add_parser("session-start", help="for the SessionStart hook: print this scope's rules").set_defaults(
         fn=cmd_session_start)
+
+    s = sub.add_parser("rescope", help="file memories under the scope of the session they came from")
+    s.add_argument("--apply", action="store_true", help="write the changes (default: show them)")
+    s.set_defaults(fn=cmd_rescope)
 
     sub.add_parser("stats", help="counts").set_defaults(fn=cmd_stats)
     sub.add_parser("export", help="dump all memories as JSONL").set_defaults(fn=cmd_export)

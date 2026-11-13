@@ -2,7 +2,9 @@
 import io
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -51,14 +53,12 @@ class TestConfig(HomeTest):
 
 class TestSettings(HomeTest):
     def test_defaults_without_config(self):
-        self.assertEqual((claudysha.user_name(), claudysha.user_pronouns(), claudysha.projects()),
-                         ("the user", "they/them", []))
+        self.assertEqual((claudysha.user_name(), claudysha.user_pronouns()), ("the user", "they/them"))
 
     def test_values_from_config(self):
         self.conf.parent.mkdir(parents=True)
-        self.conf.write_text("user_name = Alex\nuser_pronouns = he/him\nprojects = a, b ,, c\n")
-        self.assertEqual((claudysha.user_name(), claudysha.user_pronouns(), claudysha.projects()),
-                         ("Alex", "he/him", ["a", "b", "c"]))
+        self.conf.write_text("user_name = Alex\nuser_pronouns = he/him\n")
+        self.assertEqual((claudysha.user_name(), claudysha.user_pronouns()), ("Alex", "he/him"))
 
     def test_config_path_follows_xdg(self):
         with mock.patch.dict(os.environ, {"CLAUDYSHA_CONFIG": "", "XDG_CONFIG_HOME": "/x"}):
@@ -67,13 +67,50 @@ class TestSettings(HomeTest):
             self.assertEqual(claudysha.config_path(), Path.home() / ".config/claudysha/claudysha.conf")
 
 
+@unittest.skipUnless(shutil.which("git"), "needs git")
+class TestScope(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+
+    def git(self, folder, *args):
+        subprocess.run(["git", "-C", str(folder), *args], check=True, capture_output=True)
+
+    def test_repo_name_from_remote_urls(self):
+        for url in ("https://example.com/someone/tools.git", "git@example.com:someone/tools.git",
+                    "https://example.com/someone/tools/", "/srv/git/tools"):
+            self.assertEqual(claudysha.repo_name(url), "tools", url)
+
+    def test_repository_uses_origin_name_from_any_subfolder(self):
+        repo = self.root / "local-clone"
+        (repo / "sub").mkdir(parents=True)
+        self.git(repo, "init", "-q")
+        self.git(repo, "remote", "add", "origin", "https://example.com/someone/tools.git")
+        self.assertEqual(claudysha.scope_of(repo / "sub"), "tools")
+
+    def test_repository_without_remote_uses_its_folder_name(self):
+        repo = self.root / "notes"
+        repo.mkdir()
+        self.git(repo, "init", "-q")
+        self.assertEqual(claudysha.scope_of(repo), "notes")
+
+    def test_plain_or_missing_folder_is_its_absolute_path(self):
+        self.assertEqual(claudysha.scope_of(self.root), str(self.root))
+        self.assertEqual(claudysha.scope_of(self.root / "gone"), str(self.root / "gone"))
+
+    def test_current_scope_prefers_claude_project_dir(self):
+        with mock.patch.dict(os.environ, {"CLAUDE_PROJECT_DIR": str(self.root)}):
+            self.assertEqual(claudysha.current_scope(), str(self.root))
+
+
 class TestSetup(HomeTest):
     def test_interactive_answers_and_defaults(self):
-        answers = iter(["~/somewhere", "Alex", "", "a, b"])
+        answers = iter(["~/somewhere", "Alex", ""])
         self.assertTrue(claudysha.ensure_config(ask=lambda q: next(answers), out=self.out.append))
         conf = claudysha.read_config(self.conf)
         self.assertEqual(conf, {"home": "~/somewhere", "user_name": "Alex",
-                                "user_pronouns": "they/them", "projects": "a, b"})
+                                "user_pronouns": "they/them"})
 
     def test_non_interactive_writes_defaults(self):
         self.assertTrue(claudysha.ensure_config(ask=None, out=self.out.append))
@@ -88,7 +125,7 @@ class TestSetup(HomeTest):
 
     def test_rendered_example_matches_keys(self):
         example = claudysha.read_config(claudysha.REPO / "claudysha.conf.example")
-        self.assertEqual(set(example) | {"projects"}, set(claudysha.DEFAULTS))
+        self.assertEqual(set(example), set(claudysha.DEFAULTS))
 
 
 class TestInit(HomeTest):

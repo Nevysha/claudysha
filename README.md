@@ -89,7 +89,7 @@ git clone https://github.com/Nevysha/claudysha.git ~/claudysha
 
 `install.sh`:
 
-1. writes the settings file if it doesn't exist (in a terminal it asks for the data folder, your name, your pronouns and your projects; otherwise it uses the defaults),
+1. writes the settings file if it doesn't exist (in a terminal it asks for the data folder, your name and your pronouns; otherwise it uses the defaults),
 2. creates the data folder, and lets each module create its part,
 3. registers the repo as a local marketplace (`nevysha`) and installs the plugin.
 
@@ -106,7 +106,6 @@ Claude Code runs a cached copy of the plugin, made for its version (`version` in
 | `home` | `~/.claudysha` | plugin | the data folder (`CLAUDYSHA_HOME` overrides it) |
 | `user_name` | `the user` | modules | how Claude refers to you |
 | `user_pronouns` | `they/them` | modules | your pronouns |
-| `projects` | (none) | Memory | comma-separated projects to file memories under |
 
 ## 📁 Data folder
 
@@ -188,10 +187,21 @@ As a session goes on (every few hundred transcript lines), when it compacts and 
 
 ### Entries
 
-Each memory has `text`, `type`, `project`, `tags`, `confidence` (0 to 1), `status`, `superseded_by`, `source` (`manual` or `extract`), `session_id`, `created_at` (when the conversation happened), `last_used_at`, `use_count` and a JSON `meta`.
+Each memory has `text`, `type`, `scope`, `tags`, `confidence` (0 to 1), `status`, `superseded_by`, `source` (`manual` or `extract`), `session_id`, `created_at` (when the conversation happened), `last_used_at`, `use_count` and a JSON `meta`.
 
 - Types: `fact`, `decision`, `dead_end`, `event`, `todo`, `preference`, `feedback`.
 - Statuses: `active`, `proposed`, `superseded`, `rejected`. Extracted `preference` and `feedback` entries shape how Claude behaves, so they stay `proposed` until you approve them: `mem review` in a terminal (one at a time, single keys), or `/claudysha:memory-review` in a session.
+
+### Scopes
+
+A memory belongs to a scope: where it applies.
+
+- **A session's scope** is the repository it works in, by name (from the `origin` remote, else the repository folder's name, so another clone keeps the same scope), or the folder's absolute path outside a repository.
+- **`global`** is for what holds in every session: who you are and how you want Claude to work everywhere.
+
+At session start, each session gets the approved preferences and feedback of `global` and of its own scope (up to 15 each), plus the list of the other scopes. It can search them when useful (`mem search -s <scope>` or `-A`), but is told to use what it finds there as information about that place, never as rules for this one. Facts, decisions and the rest are searched, not loaded. Extraction files each memory under the session's scope or `global`, nothing else.
+
+Stores made before scopes (with a free-form `project` label) are migrated on first use: the column is renamed and `general` becomes `global`. `mem rescope` then shows how the other memories would move to the scope of the session they came from, and `mem rescope --apply` moves them.
 
 ### Why SQLite
 
@@ -213,16 +223,17 @@ Child `claude -p` runs set `MEM_NO_HOOK=1` and load no settings, so they never t
 ### Commands
 
 ```
-mem search <words...> [-p project] [-t type] [-a] [-f]   # OR-ed terms, ranked by bm25, confidence, use
-mem add "<text>" [-t type] [-p project] [--tags ...] [-c 0.9]
+mem search <words...> [-s scope] [-A] [-t type] [-a] [-f]   # this scope + global by default; -A: every scope
+mem add "<text>" [-t type] [-s scope] [--tags ...] [-c 0.9]  # default scope: this session's
 mem get <id...>
-mem list [-p project] [-t type] [-n 20]
+mem list [-s scope] [-t type] [-n 20]
 mem supersede <id> "<new text>"  |  mem supersede <id> --by <id>
-mem edit <id> [--text ...] [-t ...] [-p ...] [--tags ...] [-c ...]
+mem edit <id> [--text ...] [-t ...] [-s ...] [--tags ...] [-c ...]
 mem review [-l]                   # one by one: a approve, r reject, e edit, t type, s skip, u undo (-l: list)
 mem approve <id...>  |  mem reject <id...>
 mem ingest <transcript.jsonl> [--dry-run]
 mem backfill [--project-dir <folder under ~/.claude/projects>]
+mem rescope [--apply]            # file memories under the scope of their session
 mem stats  |  mem export          # JSONL dump
 ```
 
