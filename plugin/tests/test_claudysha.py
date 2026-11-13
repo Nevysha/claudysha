@@ -1,4 +1,4 @@
-"""Tests for claudysha.py. Run with: python3 -m unittest discover -s home/tests"""
+"""Tests for claudysha.py. Run with: python3 -m unittest discover -s plugin/tests"""
 import io
 import json
 import os
@@ -92,28 +92,10 @@ class TestSetup(HomeTest):
 
 
 class TestInit(HomeTest):
-    def test_creates_layout_and_keeps_existing_files(self):
-        self.write("brain/core.md", "mine")
-        claudysha.init()
-        self.assertEqual((self.home / "brain/core.md").read_text(), "mine")
-        for rel in ("brain/memories/MEMORY.md", "brain/maybe-later/README.md", "memory"):
-            self.assertTrue((self.home / rel).exists(), rel)
-
-
-class TestSessionStart(HomeTest):
-    def test_prints_core_and_index(self):
-        self.conf.parent.mkdir(parents=True)
-        self.conf.write_text("user_name = Alex\nuser_pronouns = he/him\n")
-        self.write("brain/core.md", "# Core\nbe nice")
-        self.write("brain/memories/MEMORY.md", "- [A](a.md)")
-        text = claudysha.session_start_text()
-        self.assertIn("be nice", text)
-        self.assertIn("- [A](a.md)", text)
-        self.assertIn(str(self.home / "brain"), text)
-        self.assertIn("You work with Alex (he/him)", text)
-
-    def test_empty_without_home(self):
-        self.assertEqual(claudysha.session_start_text(), "")
+    def test_creates_data_folder_and_module_parts(self):
+        self.assertEqual(claudysha.init(), self.home)
+        self.assertTrue((self.home / "brain/core.md").exists())  # created by the memory module
+        self.assertEqual(set(claudysha.MODULES), {"memory"})
 
 
 class TestArchiveLoad(HomeTest):

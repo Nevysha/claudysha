@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""claudysha: the plugin's home folder (config, init, archive, load) and the core-memory hook.
+"""claudysha: the plugin itself, shared by every module.
 
-The home folder holds everything the plugin keeps about its user:
-    <home>/brain/    core.md, memories/ (topic notes), maybe-later/ (backlog): its own git repo
-    <home>/memory/   memory.db (tier-1 store) and extract.log
-Settings come from ~/.config/claudysha/claudysha.conf (see claudysha.conf.example):
-the home path (default ~/.claudysha, CLAUDYSHA_HOME overrides it) and who the user is.
+- settings: ~/.config/claudysha/claudysha.conf (see claudysha.conf.example): the data
+  folder path and who the user is;
+- the data folder (~/.claudysha by default; CLAUDYSHA_HOME overrides it), where every
+  module keeps its data, and a lock modules take while writing;
+- setup and init (each module in MODULES creates its own part of the data folder);
+- archive and load of the whole data folder.
 """
 import argparse
 import contextlib
 import datetime as dt
 import fcntl
+import importlib.util
 import json
 import os
 import shutil
@@ -78,14 +80,6 @@ def home():
     return Path(os.path.expandvars(raw)).expanduser()
 
 
-def brain_dir():
-    return home() / "brain"
-
-
-def memory_dir():
-    return home() / "memory"
-
-
 @contextlib.contextmanager
 def home_lock(exclusive=False):
     """Shared for normal writers (extraction), exclusive for `load`."""
@@ -100,33 +94,21 @@ def home_lock(exclusive=False):
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
-# ---------------------------------------------------------------- init
+# ---------------------------------------------------------------- modules
 
-CORE_TEMPLATE = """# Who I work with, and how
+# Each module has a Python file exposing init(): create the module's part of the data
+# folder, never overwriting existing files.
+MODULES = {"memory": REPO / "memory" / "core.py"}
 
-Loaded into every Claude Code session by the claudysha plugin. Keep it short: only what should
-shape every session. Changes need the user's OK.
-"""
 
-INDEX_TEMPLATE = "Topic notes, in the brain folder's `memories/` (read the ones that matter for the task):\n"
+def load_module(name):
+    spec = importlib.util.spec_from_file_location(f"claudysha_{name}", MODULES[name])
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-BACKLOG_README = """# maybe-later
 
-Postponed ideas and recommendations, one note per topic. Each note starts with:
-
-```yaml
----
-status: open          # open | waiting (on the user or something external) | someday | done
-created: 2026-11-13
-review-after: 2026-11-27   # empty = no date
-summary: one line
----
-```
-
-The claudysha plugin's session start lists the notes whose `review-after` date has passed
-(status open or waiting). When a note is done, set `status: done` (or delete it; git keeps it).
-"""
-
+# ---------------------------------------------------------------- setup and init
 
 SETUP_QUESTIONS = [
     ("home", "Where should claudysha keep its data (notes, memory database, backups)?", DEFAULT_HOME),
@@ -142,12 +124,12 @@ def render_config(values):
     return (
         "# claudysha settings. Lines are `key = value`; `#` starts a comment.\n"
         "# Written by install.sh; edit freely. Reference: claudysha.conf.example in the plugin.\n\n"
-        "# Where the plugin keeps its data: brain/ (core.md, notes, backlog), memory/ (database), backups/.\n"
+        "# The data folder, where every module keeps its data (see the README).\n"
         f"home = {v['home']}\n\n"
-        "# Who Claude works with. Used by the memory extraction prompts and the session notes.\n"
+        "# Who Claude works with. Used by the modules (prompts, session notes).\n"
         f"user_name = {v['user_name']}\n"
         f"user_pronouns = {v['user_pronouns']}\n\n"
-        "# Projects the extractor should prefer when filing memories, comma-separated (optional).\n"
+        "# Memory module: projects to file memories under, comma-separated (optional).\n"
         f"projects = {v['projects']}\n"
     )
 
@@ -180,17 +162,12 @@ def ensure_config(ask=None, out=print):
 
 
 def init():
-    """Create the home layout if missing. Never overwrites files. (The config: ensure_config.)"""
-    b, m = brain_dir(), memory_dir()
-    for d in (b / "memories", b / "maybe-later", m):
-        d.mkdir(parents=True, exist_ok=True)
-    for path, text in ((b / "core.md", CORE_TEMPLATE), (b / "memories" / "MEMORY.md", INDEX_TEMPLATE),
-                       (b / "maybe-later" / "README.md", BACKLOG_README)):
-        if not path.exists():
-            path.write_text(text)
-    if not (b / ".git").exists() and shutil.which("git"):
-        subprocess.run(["git", "init", "-q", "-b", "main", str(b)], check=True)
-    return home()
+    """Create the data folder and let every module create its part. Never overwrites files."""
+    h = home()
+    h.mkdir(parents=True, exist_ok=True)
+    for name in MODULES:
+        load_module(name).init()
+    return h
 
 
 # ---------------------------------------------------------------- archive
@@ -308,24 +285,6 @@ def load(path, confirm, out=print):
     return safety
 
 
-# ---------------------------------------------------------------- session start
-
-def session_start_text():
-    """core.md and the topic index, as context for every session."""
-    b = brain_dir()
-    parts = []
-    core = b / "core.md"
-    if core.is_file():
-        parts.append(core.read_text().strip())
-    index = b / "memories" / "MEMORY.md"
-    if index.is_file():
-        parts.append(f"## Topic notes (in {b / 'memories'})\n\n" + index.read_text().strip())
-    if not parts:
-        return ""
-    return (f"[claudysha] You work with {user_name()} ({user_pronouns()}). Core memory from {b} "
-            f"(tier 2; edit those files only with {user_name()}'s OK):\n\n" + "\n\n".join(parts))
-
-
 # ---------------------------------------------------------------- commands
 
 def tty_confirm(prompt):
@@ -357,7 +316,7 @@ def main():
     s.add_argument("dest", nargs="?", help="file or folder (default: ./claudysha-<date>.tar.gz)")
     s = sub.add_parser("load", help="replace the whole home with an archive (asks for confirmation)")
     s.add_argument("archive")
-    sub.add_parser("session-start", help="for the SessionStart hook: print core.md and the topic index")
+    sub.add_parser("session-start", help="for the SessionStart hook: make sure the data folder exists")
     a = p.parse_args()
 
     if a.cmd == "home":
@@ -385,9 +344,6 @@ def main():
         if not config_path().exists():
             print(f"[claudysha] No settings file yet ({config_path()}). Suggest once that the user runs "
                   f"`{REPO / 'claudysha'} setup` in a terminal to set their name, pronouns and data folder.")
-        text = session_start_text()
-        if text:
-            print(text)
 
 
 if __name__ == "__main__":

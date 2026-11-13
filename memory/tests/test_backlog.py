@@ -1,4 +1,4 @@
-"""Tests for backlog.py. Run with: python3 -m unittest discover -s backlog/tests"""
+"""Tests for backlog.py. Run with: python3 -m unittest discover -s memory/tests"""
 import datetime as dt
 import io
 import sys

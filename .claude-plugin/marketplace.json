@@ -8,7 +8,7 @@
     {
       "name": "claudysha",
       "source": "./",
-      "description": "Personal memory for Claude Code: automatic long-term store, core memory, backlog"
+      "description": "A personal plugin for Claude Code"
     }
   ]
 }

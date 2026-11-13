@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""mem: Claude's long-term memory store (tier 1), one SQLite file. Part of the claudysha plugin.
+"""mem: the long-term store (tier 1) of the claudysha memory module, one SQLite file.
 
 See README.md for the design. Run `mem -h` for the commands.
 """
@@ -17,11 +17,13 @@ import sys
 import textwrap
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent          # memory/
-sys.path.insert(0, str(ROOT.parent / "home"))
-import claudysha  # noqa: E402  (plugin home: config, paths, lock)
+ROOT = Path(__file__).resolve().parent          # memory/store/
+sys.path.insert(0, str(ROOT.parent.parent / "plugin"))
+sys.path.insert(0, str(ROOT.parent))
+import claudysha  # noqa: E402  (the plugin: settings, data folder, lock)
+import core  # noqa: E402  (memory module paths)
 
-DATA_DIR = claudysha.memory_dir()                # <home>/memory
+DATA_DIR = core.store_dir()                      # <data folder>/memory
 DB_PATH = Path(os.environ.get("MEM_DB", DATA_DIR / "memory.db"))
 LOG_PATH = DB_PATH.parent / "extract.log"
 PROMPT_PATH = ROOT / "prompts" / "extract.md"

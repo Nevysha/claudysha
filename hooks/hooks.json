@@ -10,12 +10,17 @@
           },
           {
             "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/memory/core.py\" session-start",
+            "timeout": 10
+          },
+          {
+            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/mem\" session-start",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/backlog/backlog.py\" session-start",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/memory/backlog.py\" session-start",
             "timeout": 10
           }
         ]

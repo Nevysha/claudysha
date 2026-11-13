@@ -1,7 +1,7 @@
 {
   "name": "claudysha",
-  "version": "0.5.0",
-  "description": "A personal memory plugin for Claude Code: a SQLite store filled automatically from every session and searched on demand, a hand-written core memory loaded into every session, and a backlog of postponed ideas.",
+  "version": "0.6.0",
+  "description": "A personal plugin for Claude Code. Modules: Memory (automatic long-term store, core memory, backlog).",
   "author": {
     "name": "Nevysha"
   },

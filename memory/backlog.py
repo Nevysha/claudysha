@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""backlog: postponed ideas in <home>/brain/maybe-later, and which ones are due.
+"""backlog (memory module): postponed ideas in <data folder>/brain/maybe-later, and which are due.
 
 Each note starts with a small frontmatter (status, created, review-after, summary).
 See maybe-later/README.md there. Part of the claudysha plugin.
@@ -10,10 +10,12 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "home"))
-import claudysha  # noqa: E402  (plugin home: config, paths)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plugin"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import claudysha  # noqa: E402  (the plugin: settings)
+import core  # noqa: E402  (memory module paths)
 
-BRAIN = claudysha.brain_dir()
+BRAIN = core.brain_dir()
 ACTIVE = {"open", "waiting"}
 
 
