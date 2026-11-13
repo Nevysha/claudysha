@@ -26,10 +26,12 @@ That knowledge stays in the user's data folder, on their machine, and the parts 
 
 claudysha has two layers: **the plugin**, which provides what every module shares, and **modules**, which add the actual features.
 
+<p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">
   <img alt="Claude Code sessions use modules through hooks and skills; modules use the plugin (settings, data folder, archive / load), which keeps everything in ~/.claudysha" src="docs/diagrams/architecture-light.png" width="560">
 </picture>
+</p>
 
 - **The plugin**: installation, settings, one data folder for everything, archive / load of that folder.
 - **Modules**: each lives in its own folder, keeps its data in its own part of the data folder, and plugs into Claude Code through hooks and skills.
@@ -117,10 +119,12 @@ Modules read the settings and the data folder path through `plugin/claudysha.py`
 
 Gives Claude a memory that carries across sessions.
 
+<p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/memory-dark.png">
   <img alt="Sessions are extracted into the long-term store, which Claude searches; core memory and due backlog items reach Claude at session start; you write the core and approve preferences" src="docs/diagrams/memory-light.png" width="820">
 </picture>
+</p>
 
 It has three parts:
 
