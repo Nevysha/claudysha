@@ -11,3 +11,8 @@ user_pronouns = she/her
 
 # Memory module: projects to file memories under, comma-separated (optional).
 projects =
+
+# Memory module: during a session, extract memories once this many new transcript lines
+# piled up (checked after each reply). 0 turns it off: extraction then only runs at
+# compaction and at the end of the session.
+# memory_every_lines = 300

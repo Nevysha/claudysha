@@ -29,6 +29,7 @@ LOG_PATH = DB_PATH.parent / "extract.log"
 PROMPT_PATH = ROOT / "prompts" / "extract.md"
 EXTRACT_MODEL = os.environ.get("MEM_EXTRACT_MODEL", "haiku")
 CHUNK_CHARS = 80_000  # transcript text per extraction call
+EVERY_LINES = 300     # Stop hook: extract once this many new transcript lines piled up
 DEFAULT_PROJECTS = ["general"]  # plus `projects` from the config
 
 TYPES = ["fact", "decision", "dead_end", "event", "todo", "preference", "feedback"]
@@ -558,11 +559,46 @@ def cmd_ingest(db, a):
           f"superseded {sup}, cost ${cost:.4f}")
 
 
+def every_lines():
+    """`memory_every_lines` from the config (0 turns the Stop trigger off)."""
+    raw = claudysha.read_config().get("memory_every_lines", "")
+    try:
+        return int(raw) if raw else EVERY_LINES
+    except ValueError:
+        return EVERY_LINES
+
+
+def hook_due(db, payload):
+    """SessionEnd and PreCompact always extract. Stop fires after every reply, so it only
+    extracts once `every_lines()` new transcript lines piled up since the last extraction."""
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    if data.get("hook_event_name") != "Stop":
+        return True
+    every, path = every_lines(), data.get("transcript_path")
+    if every <= 0 or not path:
+        return False
+    row = db.execute("SELECT lines_done FROM ingested WHERE session_id = ?",
+                     (data.get("session_id") or Path(path).stem,)).fetchone()
+    try:
+        with open(Path(path).expanduser(), "rb") as f:
+            total = sum(1 for _ in f)
+    except OSError:
+        return False
+    return total - (row["lines_done"] if row else 0) >= every
+
+
 def cmd_hook(db, a):
     """Entry point for Claude Code hooks: hand the hook JSON to a detached `ingest --hook`."""
     if os.environ.get("MEM_NO_HOOK"):
         return
     payload = sys.stdin.read()
+    if not hook_due(db, payload):
+        return
     LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LOG_PATH.open("a") as logf:
         proc = subprocess.Popen([sys.executable, str(ROOT / "mem.py"), "ingest", "--hook"],

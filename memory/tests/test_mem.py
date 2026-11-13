@@ -252,6 +252,36 @@ class TestIngest(TranscriptTest):
                                            "message": {"content": "hi"}}])
             self.assertEqual(mem.condense(path, 0)[0], "Alex: hi")
 
+    def stop_payload(self, path, session="s1"):
+        return json.dumps({"hook_event_name": "Stop", "transcript_path": str(path), "session_id": session})
+
+    def test_stop_hook_waits_for_enough_new_lines(self):
+        path = self.write_transcript([{"type": "user", "message": {"content": f"line {i}"}} for i in range(5)])
+        conf = Path(self.tmp.name) / "every.conf"
+        conf.write_text("memory_every_lines = 3\n")
+        with mock.patch.dict("os.environ", {"CLAUDYSHA_CONFIG": str(conf)}):
+            self.assertTrue(mem.hook_due(self.db, self.stop_payload(path)))
+            mem.mark_ingested(self.db, "s1", str(path), 3)
+            self.assertFalse(mem.hook_due(self.db, self.stop_payload(path)))  # 2 new lines
+            conf.write_text("memory_every_lines = 0\n")
+            mem.mark_ingested(self.db, "s1", str(path), 0)
+            self.assertFalse(mem.hook_due(self.db, self.stop_payload(path)))  # turned off
+        self.assertFalse(mem.hook_due(self.db, self.stop_payload("/nonexistent.jsonl")))
+        self.assertFalse(mem.hook_due(self.db, "not json"))
+
+    def test_end_and_compact_hooks_always_extract(self):
+        for event in ("SessionEnd", "PreCompact"):
+            self.assertTrue(mem.hook_due(self.db, json.dumps({"hook_event_name": event})))
+
+    def test_stop_hook_spawns_nothing_when_not_due(self):
+        path = self.write_transcript([{"type": "user", "message": {"content": "hi"}}])
+        with mock.patch.object(sys, "stdin", io.StringIO(self.stop_payload(path))), \
+                mock.patch.object(mem.subprocess, "Popen") as popen, \
+                mock.patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("MEM_NO_HOOK", None)
+            mem.cmd_hook(self.db, None)
+        popen.assert_not_called()
+
     def test_hook_guard(self):
         args = mock.Mock(hook=True)
         with mock.patch.dict("os.environ", {"MEM_NO_HOOK": "1"}), \

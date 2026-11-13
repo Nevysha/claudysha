@@ -47,6 +47,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/mem\" hook",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

@@ -151,7 +151,7 @@ Gives Claude a memory that carries across sessions.
 ```mermaid
 %%{init: {'themeVariables': {'edgeLabelBackground': '#ffffff00'}, 'themeCSS': '.labelBkg { background-color: transparent !important; }'}}%%
 flowchart LR
-    S(["💬 your sessions"]) -->|"on end / compact:<br/>Haiku extracts"| LT[("🗄️ long-term store")]
+    S(["💬 your sessions"]) -->|"as it goes, on compact, on end:<br/>Haiku extracts"| LT[("🗄️ long-term store")]
     LT -->|"searched when it matters"| C(["🤖 Claude"])
     CORE["✍️ core memory<br/>core.md + topic index"] -->|"every session start"| C
     BL["⏰ backlog"] -->|"due items at session start"| C
@@ -184,7 +184,7 @@ The split matters: the long-term store can capture generously because it's never
 
 ## 🗄️ Long-term store
 
-When a session ends or compacts, a small model (Haiku) reads the transcript and extracts memories into a local SQLite database. Claude searches it when the topic calls for it.
+As a session goes on (every few hundred transcript lines), when it compacts and when it ends, a small model (Haiku) reads the transcript and extracts memories into a local SQLite database. Claude searches it when the topic calls for it.
 
 ### Entries
 
@@ -199,7 +199,7 @@ One file, no server. Tables cover metadata and filtering, JSON columns cover fre
 
 ### Extraction
 
-The SessionEnd and PreCompact hooks run `mem hook`, which starts `mem ingest --hook` in the background so the session never waits. It:
+Three hooks run `mem hook`: SessionEnd, PreCompact, and Stop (after each of Claude's replies). For Stop, it first counts the transcript lines not extracted yet and does nothing until there are `memory_every_lines` of them (300 by default, `0` turns it off), so a long session is saved as it goes. Then it starts `mem ingest --hook` in the background so the session never waits. It:
 
 1. reads the transcript from where the last run stopped,
 2. skips sessions you never typed in (`claude -p` runs from scripts have no message with `origin.kind == "human"`),
@@ -208,7 +208,7 @@ The SessionEnd and PreCompact hooks run `mem hook`, which starts `mem ingest --h
 5. sends each candidate with its closest stored memories to a second call (`memory/store/prompts/resolve.md`) that marks duplicates and memories it makes obsolete,
 6. stores the rest and supersedes the obsolete ones.
 
-Child `claude -p` runs set `MEM_NO_HOOK=1` and load no settings, so they never trigger extraction themselves. `MEM_EXTRACT_MODEL` overrides the model. It costs well under a cent per session.
+Child `claude -p` runs set `MEM_NO_HOOK=1` and load no settings, so they never trigger extraction themselves. `MEM_EXTRACT_MODEL` overrides the model. It costs well under a cent per extraction run.
 
 ### Commands
 
@@ -256,7 +256,7 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | SessionStart: `memory/core.py session-start` | core memory |
 | SessionStart: `mem session-start` (a line saying the store exists, and how many memories wait for review) | long-term store |
 | SessionStart: `memory/backlog.py session-start` | backlog |
-| SessionEnd and PreCompact: `mem hook` | long-term store |
+| SessionEnd, PreCompact and Stop: `mem hook` (Stop only every `memory_every_lines` new transcript lines) | long-term store |
 | `claudysha:recall` skill: how to search, save and correct memories | long-term store |
 | `/claudysha:memory-review` skill: review proposed memories in the chat | long-term store |
 
