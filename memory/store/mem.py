@@ -547,6 +547,8 @@ def cmd_ingest(db, a):
             return
         data = json.load(sys.stdin)
         path, session = data.get("transcript_path"), data.get("session_id")
+        if not path or not Path(path).expanduser().exists():
+            return  # Claude Code writes no transcript for a session closed before its first message
         try:
             added, skipped, sup, cost = ingest(db, path, session)
             log(f"{data.get('hook_event_name')} {session}: +{added} new, {skipped} duplicates, "

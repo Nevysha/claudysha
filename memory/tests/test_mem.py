@@ -216,14 +216,22 @@ class TestIngest(TranscriptTest):
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM memories").fetchone()[0], 0)
         self.assertIsNone(self.db.execute("SELECT * FROM ingested").fetchone())
 
-    def test_hook_mode_logs_errors_instead_of_raising(self):
+    def run_ingest_hook(self, path):
         args = mock.Mock(hook=True)
-        stdin = io.StringIO(json.dumps({"transcript_path": "/nonexistent.jsonl",
+        stdin = io.StringIO(json.dumps({"transcript_path": str(path),
                                         "session_id": "s1", "hook_event_name": "SessionEnd"}))
         with mock.patch.object(sys, "stdin", stdin), mock.patch.dict("os.environ", {}, clear=False) as env:
             env.pop("MEM_NO_HOOK", None)
             mem.cmd_ingest(self.db, args)
-        self.assertIn("ERROR s1", mem.LOG_PATH.read_text())
+
+    def test_hook_mode_logs_errors_instead_of_raising(self):
+        with mock.patch.object(mem, "ingest", side_effect=RuntimeError("boom")):
+            self.run_ingest_hook(self.transcript())
+        self.assertIn("ERROR s1: boom", mem.LOG_PATH.read_text())
+
+    def test_hook_mode_skips_missing_transcript_quietly(self):
+        self.run_ingest_hook("/nonexistent.jsonl")
+        self.assertFalse(mem.LOG_PATH.exists() and "s1" in mem.LOG_PATH.read_text())
 
     def test_session_start_note(self):
         self.add("a fact")
