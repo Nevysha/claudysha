@@ -93,7 +93,7 @@ git clone https://github.com/Nevysha/claudysha.git ~/claudysha
 2. creates the data folder, and lets each module create its part,
 3. registers the repo as a local marketplace (`nevysha`) and installs the plugin.
 
-A plugin installed from a local folder runs in place: edits apply to new sessions (or after `/reload-plugins`).
+Claude Code runs a cached copy of the plugin, made for its version (`version` in `.claude-plugin/plugin.json`). After pulling or editing, run `./install.sh` again: it refreshes the copy when the version changed. New sessions (or `/reload-plugins`) then use it.
 
 **From Claude Code's plugin manager:** `/plugin marketplace add Nevysha/claudysha`, then `/plugin install claudysha@nevysha`. The data folder is created at the first session start, which also suggests running `claudysha setup` to write the settings.
 

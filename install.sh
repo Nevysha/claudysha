@@ -33,6 +33,16 @@ if ! claude plugin list 2>/dev/null | grep -q "$plugin"; then
     claude plugin install "$plugin" --scope user
     changed=yes
 fi
+# Claude Code runs a cached copy of the plugin, one per version: refresh it when the repo's
+# version is newer than the installed one.
+want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$dir/.claude-plugin/plugin.json")
+have=$(claude plugin list 2>/dev/null | grep -A2 "$plugin" | sed -n 's/.*Version: *//p' | head -1)
+if [ "$changed" = no ] && [ "$have" != "$want" ]; then
+    claude plugin marketplace update nevysha >/dev/null
+    claude plugin update "$plugin" --scope user
+    echo "claudysha updated from ${have:-?} to $want: new sessions (or /reload-plugins) use it"
+    exit 0
+fi
 if [ "$changed" = yes ]; then
     echo "claudysha installed: hooks and skills load in new sessions (or after /reload-plugins)"
 else
