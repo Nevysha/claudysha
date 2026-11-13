@@ -24,20 +24,34 @@ That knowledge stays in the user's data folder, on their machine, and the parts 
 
 ### 🧩 How it's built
 
-claudysha is made of two layers:
+claudysha has two layers: **the plugin**, which provides what every module shares, and **modules**, which add the actual features.
 
-- **The plugin** provides what every module shares: installation, settings, one data folder for everything, and archive / load of that folder.
-- **Modules** add the actual features. Each one lives in its own folder, keeps its data in its own part of the data folder, and plugs into Claude Code through hooks and skills.
+```mermaid
+flowchart TB
+    CC(["💬 Claude Code sessions"])
 
-| Module | What it does |
-|---|---|
-| 🧠 [Memory](#memory-module) | automatic long-term store, core memory, backlog |
+    subgraph MODS["🧩 Modules"]
+        direction LR
+        MEM["🧠 Memory"] ~~~ NEXT["… more to come"]
+    end
 
+    subgraph PLUGIN["🔌 Plugin"]
+        direction LR
+        SET["⚙️ settings"] ~~~ DF["📁 data folder"] ~~~ AL["📦 archive / load"]
+    end
+
+    DATA[("~/.claudysha")]
+
+    CC <-->|"hooks & skills"| MODS
+    MODS -->|"use"| PLUGIN
+    PLUGIN -->|"keeps everything in"| DATA
+
+    style NEXT stroke-dasharray: 5 5
 ```
-your sessions ──┬──► long-term store ──► searched when it matters
-                ├──► core memory ──────► who you are, in every session
-                └──► backlog ──────────► postponed ideas come back on time
-```
+
+- **The plugin**: installation, settings, one data folder for everything, archive / load of that folder.
+- **Modules**: each lives in its own folder, keeps its data in its own part of the data folder, and plugs into Claude Code through hooks and skills.
+    - 🧠 **[Memory](#memory-module)**: automatic long-term store, core memory, backlog.
 
 No server, no external database, no dependencies: Python's standard library (3.12+, with SQLite FTS5).
 
@@ -120,7 +134,19 @@ Modules read the settings and the data folder path through `plugin/claudysha.py`
 
 # 🧠 Memory module
 
-Gives Claude a memory that carries across sessions. It has three parts:
+Gives Claude a memory that carries across sessions.
+
+```mermaid
+flowchart LR
+    S(["💬 your sessions"]) -->|"on end / compact:<br/>Haiku extracts"| LT[("🗄️ long-term store")]
+    LT -->|"searched when it matters"| C(["🤖 Claude"])
+    CORE["✍️ core memory<br/>core.md + topic index"] -->|"every session start"| C
+    BL["⏰ backlog"] -->|"due items at session start"| C
+    U(["🙋 you"]) -->|"write / approve"| CORE
+    U -->|"approve preferences & feedback"| LT
+```
+
+It has three parts:
 
 | Part | What | Data | In sessions |
 |---|---|---|---|
