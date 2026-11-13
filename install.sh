@@ -36,7 +36,14 @@ fi
 # Claude Code runs a cached copy of the plugin, one per version: refresh it when the repo's
 # version is newer than the installed one.
 want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$dir/.claude-plugin/plugin.json")
-have=$(claude plugin list 2>/dev/null | grep -A2 "$plugin" | sed -n 's/.*Version: *//p' | head -1)
+# (`claude plugin list` shows the repo's version, not the installed copy's: read Claude Code's record.)
+have=$(python3 - "$plugin" <<'PY' 2>/dev/null || true
+import json, os, sys
+path = os.path.expanduser("~/.claude/plugins/installed_plugins.json")
+entries = json.load(open(path)).get("plugins", {}).get(sys.argv[1], [])
+print(next((e.get("version", "") for e in entries if e.get("scope") == "user"), ""))
+PY
+)
 if [ "$changed" = no ] && [ "$have" != "$want" ]; then
     claude plugin marketplace update nevysha >/dev/null
     claude plugin update "$plugin" --scope user
