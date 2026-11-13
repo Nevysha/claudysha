@@ -10,3 +10,11 @@ A personal plugin for Claude Code ("personal" as in personal to each user: it st
 - Python standard library only. Small bash entrypoints (`install.sh`) are fine.
 - Extraction prompts are in `memory/store/prompts/` (`{{user}}` and `{{pronouns}}` are filled from the config). Try prompt changes with `mem ingest --dry-run <transcript>` on a real transcript before committing.
 - `claudysha load` must keep requiring the user's typed `erase` in a real terminal: never add a flag or path that skips it, and never confirm a real load yourself (for example by faking a terminal). Tests may do so on a temporary data folder only.
+
+## Installing claudysha for a user
+
+When a user asks you to install it (the README suggests they just ask Claude):
+
+1. Clone the repo to `~/claudysha` (or where they prefer).
+2. If `~/.config/claudysha/claudysha.conf` doesn't exist, ask them in the chat, with the defaults: the data folder (`~/.claudysha`), the name you should use for them, their pronouns (`they/them`), and their projects (optional). Write the file from `claudysha.conf.example` with their answers. `install.sh` would ask the same questions, but only in a real terminal, which your shell isn't.
+3. Run `~/claudysha/install.sh`, then tell them to start a new session (or `/reload-plugins`) so the hooks and skills load.

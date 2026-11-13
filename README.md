@@ -1,8 +1,28 @@
-# claudysha
+<div align="center">
 
-A personal plugin for [Claude Code](https://code.claude.com).
+# 🧠 claudysha
 
-**"Personal" means personal to whoever uses it.** It isn't one person's setup to copy: every install starts out generic and becomes personal to its own user as it learns from their sessions: what they work on, the decisions they made and why, how they like Claude to work with them. Two people using claudysha end up with two different Claudes, each shaped by its own user's habits. That knowledge stays in the user's data folder, on their machine, and the parts that change how Claude behaves only change with their OK.
+**A personal plugin for [Claude Code](https://code.claude.com)**
+*one that grows into* your *Claude, session after session*
+
+![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-D97757)
+![Python stdlib only](https://img.shields.io/badge/python-stdlib_only-3776AB?logo=python&logoColor=white)
+![Local first](https://img.shields.io/badge/data-stays_on_your_machine-2ea44f)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+
+</div>
+
+---
+
+### ✨ What "personal" means
+
+**Personal to whoever uses it.** It isn't one person's setup to copy: every install starts out generic and becomes personal to its own user as it learns from their sessions: what they work on, the decisions they made and why, how they like Claude to work with them.
+
+> Two people using claudysha end up with two different Claudes, each shaped by its own user's habits.
+
+That knowledge stays in the user's data folder, on their machine, and the parts that change how Claude behaves only change with their OK.
+
+### 🧩 How it's built
 
 claudysha is made of two layers:
 
@@ -11,20 +31,33 @@ claudysha is made of two layers:
 
 | Module | What it does |
 |---|---|
-| [Memory](#memory-module) | automatic long-term store, core memory, backlog |
+| 🧠 [Memory](#memory-module) | automatic long-term store, core memory, backlog |
 
-Python standard library only (3.12+, with SQLite FTS5 for the Memory module), no server, no external database.
+```
+   your sessions ──► 🧠 long-term store ──► searched when it matters
+         │
+         └──────────► ✍️ core memory ──────► who you are, in every session
+                     ⏰ backlog ───────────► postponed ideas come back on time
+```
+
+No server, no external database, no dependencies: Python's standard library (3.12+, with SQLite FTS5).
 
 ---
 
-# The plugin
+# 🔌 The plugin
 
-## Install
+## 🚀 Install
 
-From a clone:
+**The easy way: ask Claude to install it ;)**
+
+> Install the claudysha plugin from https://github.com/Nevysha/claudysha for me.
+
+Claude clones it, asks you the few setup questions in the chat, and runs the installer (the repo's `CLAUDE.md` tells it how).
+
+**By hand,** from a clone:
 
 ```
-git clone <this repo> ~/claudysha
+git clone https://github.com/Nevysha/claudysha.git ~/claudysha
 ~/claudysha/install.sh            # asks a few questions, then installs claudysha@nevysha for your user
 ~/claudysha/install.sh --remove   # uninstalls; your data stays
 ```
@@ -37,9 +70,9 @@ git clone <this repo> ~/claudysha
 
 A plugin installed from a local folder runs in place: edits apply to new sessions (or after `/reload-plugins`).
 
-From GitHub, inside Claude Code: `/plugin marketplace add <owner>/<repo>`, then `/plugin install claudysha@nevysha`. The data folder is created at the first session start, which also suggests running `claudysha setup` to write the settings.
+**From Claude Code's plugin manager:** `/plugin marketplace add Nevysha/claudysha`, then `/plugin install claudysha@nevysha`. The data folder is created at the first session start, which also suggests running `claudysha setup` to write the settings.
 
-## Settings
+## ⚙️ Settings
 
 `~/.config/claudysha/claudysha.conf` (or `$XDG_CONFIG_HOME/claudysha/claudysha.conf`, or `CLAUDYSHA_CONFIG`). It lives outside the plugin folder on purpose: a plugin installed from GitHub is a cached copy that's replaced on updates. `claudysha.conf.example` documents it; `./claudysha config` shows the file in use and the settings in effect.
 
@@ -50,7 +83,7 @@ From GitHub, inside Claude Code: `/plugin marketplace add <owner>/<repo>`, then 
 | `user_pronouns` | `they/them` | modules | your pronouns |
 | `projects` | (none) | Memory | comma-separated projects to file memories under |
 
-## Data folder
+## 📁 Data folder
 
 Everything claudysha keeps lives in one folder, never in the plugin itself. Each module owns its part:
 
@@ -61,7 +94,7 @@ Everything claudysha keeps lives in one folder, never in the plugin itself. Each
   backups/    yours: anything you want archived with the rest
 ```
 
-## Archive and load
+## 📦 Archive and load
 
 ```
 ./claudysha archive [file-or-folder]   # .tar.gz of the whole data folder
@@ -72,7 +105,7 @@ Everything claudysha keeps lives in one folder, never in the plugin itself. Each
 - `load` erases everything that isn't in the archive. It lists what would be erased and only proceeds when you **type `erase` in a terminal**. It refuses piped input, which stops accidental or scripted confirmations; a program could still fake a terminal, so the rest is a rule: Claude must never confirm a load for you. Before replacing anything it saves the current folder next to it (`~/.claudysha-before-load-<date>.tar.gz`). It rejects archives with absolute or `..` paths, links, or no manifest.
 - Modules that write in the background take a shared lock on the data folder, and `load` an exclusive one, so they never overlap.
 
-## How modules plug in
+## 🧩 How modules plug in
 
 A module is a folder with:
 
@@ -84,19 +117,23 @@ Modules read the settings and the data folder path through `plugin/claudysha.py`
 
 ---
 
-# Memory module
+<a id="memory-module"></a>
+
+# 🧠 Memory module
 
 Gives Claude a memory that carries across sessions. It has three parts:
 
 | Part | What | Data | In sessions |
 |---|---|---|---|
-| [Long-term store](#long-term-store) | facts, decisions, dead ends... extracted automatically from every session | `memory/memory.db` | searched on demand (`claudysha:recall` skill) |
-| [Core memory](#core-memory) | who you are, how you want Claude to work with you, an index of topic notes | `brain/core.md`, `brain/memories/` | printed into every session |
-| [Backlog](#backlog) | postponed ideas with a review date | `brain/maybe-later/` | due items listed at session start |
+| 🗄️ [Long-term store](#long-term-store) | facts, decisions, dead ends... extracted automatically from every session | `memory/memory.db` | searched on demand (`claudysha:recall` skill) |
+| ✍️ [Core memory](#core-memory) | who you are, how you want Claude to work with you, an index of topic notes | `brain/core.md`, `brain/memories/` | printed into every session |
+| ⏰ [Backlog](#backlog) | postponed ideas with a review date | `brain/maybe-later/` | due items listed at session start |
 
 The split matters: the long-term store can capture generously because it's never loaded wholesale, while the core, which shapes how Claude behaves, stays small and only changes with your OK. `brain/` is a git repo, so every change to the hand-written notes has a history.
 
-## Long-term store
+<a id="long-term-store"></a>
+
+## 🗄️ Long-term store
 
 When a session ends or compacts, a small model (Haiku) reads the transcript and extracts memories into a local SQLite database. Claude searches it when the topic calls for it.
 
@@ -140,11 +177,15 @@ mem backfill [--project-dir <folder under ~/.claude/projects>]
 mem stats  |  mem export          # JSONL dump
 ```
 
-## Core memory
+<a id="core-memory"></a>
+
+## ✍️ Core memory
 
 `brain/core.md` holds who you are and how you want Claude to work with you; `brain/memories/` holds one note per topic, indexed in `brain/memories/MEMORY.md`. At session start (and again after a compaction), `memory/core.py` prints `core.md` and the index into the session, so they shape every session. You write these files (or approve Claude's edits); keep `core.md` short.
 
-## Backlog
+<a id="backlog"></a>
+
+## ⏰ Backlog
 
 One note per postponed idea in `brain/maybe-later/`, starting with:
 
@@ -159,7 +200,7 @@ summary: one line
 
 At session start, `memory/backlog.py` lists the open or waiting notes whose `review-after` date has passed, so postponed work comes back on its own. `memory/backlog.py list` shows them all.
 
-## What the module adds to a session
+## 🪝 What the module adds to a session
 
 | Piece | Part |
 |---|---|
@@ -170,14 +211,14 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | `claudysha:recall` skill: how to search, save and correct memories | long-term store |
 | `/claudysha:memory-review` skill: review proposed memories in the chat | long-term store |
 
-## Not done yet
+## 🛣️ Not done yet
 
 - A consolidation pass that proposes promotions from the store to the core, merges, and expiry of stale todos.
 - Meaning search with `sqlite-vec`, if keyword search starts missing things.
 
 ---
 
-# Repository layout
+# 🗺️ Repository layout
 
 | Path | What |
 |---|---|
@@ -187,7 +228,7 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | `hooks/hooks.json`, `skills/` | what the plugin and its modules add to sessions |
 | `install.sh`, `claudysha.conf.example` | installation and settings reference |
 
-## Tests
+## 🧪 Tests
 
 ```
 python3 -m unittest discover -s plugin/tests
@@ -196,6 +237,6 @@ python3 -m unittest discover -s memory/tests
 
 Standard library only; model calls are mocked. Scheduled archives and an off-machine copy are not done yet.
 
-## License
+## 📜 License
 
 MIT, see `LICENSE`.
