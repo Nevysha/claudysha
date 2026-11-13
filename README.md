@@ -2,7 +2,7 @@
 
 # 🧠 claudysha
 
-**A personal plugin for [Claude Code](https://code.claude.com)**
+**A personal plugin for [Claude Code](https://code.claude.com)**<br>
 *one that grows into* your *Claude, session after session*
 
 ![Claude Code plugin](https://img.shields.io/badge/Claude_Code-plugin-D97757)
@@ -34,10 +34,9 @@ claudysha is made of two layers:
 | 🧠 [Memory](#memory-module) | automatic long-term store, core memory, backlog |
 
 ```
-   your sessions ──► 🧠 long-term store ──► searched when it matters
-         │
-         └──────────► ✍️ core memory ──────► who you are, in every session
-                     ⏰ backlog ───────────► postponed ideas come back on time
+your sessions ──┬──► long-term store ──► searched when it matters
+                ├──► core memory ──────► who you are, in every session
+                └──► backlog ──────────► postponed ideas come back on time
 ```
 
 No server, no external database, no dependencies: Python's standard library (3.12+, with SQLite FTS5).
