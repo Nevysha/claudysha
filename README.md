@@ -29,7 +29,7 @@ claudysha has two layers: **the plugin**, which provides what every module share
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.png">
-  <img alt="Claude Code sessions use modules through hooks and skills; modules use the plugin (settings, data folder, archive / load), which keeps everything in ~/.claudysha" src="docs/diagrams/architecture-light.png" width="560">
+  <img alt="Claude Code sessions use modules through hooks and skills; modules use the plugin (settings, data folder, archive / load), which keeps its files in ~/.claudysha: your data in data/ (archived), its own commands and state in bin/ and state/" src="docs/diagrams/architecture-light.png" width="560">
 </picture>
 </p>
 

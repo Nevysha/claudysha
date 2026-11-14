@@ -10,8 +10,10 @@
     <div class="card green"><div class="ico">⚙️</div><div><b>settings</b></div></div>
     <div class="card green"><div class="ico">📁</div><div><b>data folder</b></div></div>
     <div class="card green"><div class="ico">📦</div><div><b>archive / load</b></div></div></div></div>
-  <div class="card amber" id="data"><div class="ico">🗂️</div><div><b class="mono">~/.claudysha</b></div></div>
+  <div class="panel amber" id="data"><h3 class="mono" style="text-transform:none;letter-spacing:0;font-size:13px">🗂️ ~/.claudysha</h3><div class="row">
+    <div class="card amber"><div class="ico">💾</div><div><b class="mono">data/</b><small>your data · archived</small></div></div>
+    <div class="card grey"><div class="ico" style="--c:var(--grey)">🔧</div><div><b class="mono">bin/ · state/</b><small>the plugin's own</small></div></div></div></div>
 </div>
 <script src="wires.js"></script><script>
-wire("cc","mods","hooks &amp; skills","b","t",{both:true});wire("mods","plg","use");wire("plg","data","keeps everything in");
+wire("cc","mods","hooks &amp; skills","b","t",{both:true});wire("mods","plg","use");wire("plg","data","keeps its files in");
 </script></body></html>

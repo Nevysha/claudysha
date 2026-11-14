@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 CHROME=${CHROME:-$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)}
 [ -n "$CHROME" ] || { echo "Chrome not found: set CHROME" >&2; exit 1; }
-declare -A SIZE=([architecture]=760,680 [memory]=1100,300)
+declare -A SIZE=([architecture]=760,720 [memory]=1100,300)
 dir=$PWD; url="file://$PWD"
 if [[ $CHROME == *.exe ]]; then dir=$(wslpath -w "$PWD"); url="file:///${dir//\\//}"; fi
 sep=/; [[ $CHROME == *.exe ]] && sep='\'
