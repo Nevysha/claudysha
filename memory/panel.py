@@ -238,4 +238,7 @@ def spec():
             ("POST", "/api/memory/supersede"): supersede,
         },
         "overview": overview_cards,
+        "scopes": lambda: summary({}, {})["scopes"],
+        "session_labels": {"memory/core.py": "Core memory", "mem": "Long-term memory",
+                           "memory/backlog.py": "Backlog"},
     }

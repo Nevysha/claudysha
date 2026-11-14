@@ -733,8 +733,13 @@ def cmd_session_start(db, a):
     data = {}
     with contextlib.suppress(Exception):
         data = json.loads(sys.stdin.read())  # the hook JSON: its `cwd` is the session's folder
-    cwd = data.get("cwd") if isinstance(data, dict) else None
-    print(session_note(db, claudysha.scope_of(cwd) if cwd else claudysha.current_scope()))
+    data = data if isinstance(data, dict) else {}
+    # The dashboard's session preview names the scope to show (Claude Code never sends this).
+    scope = data.get("claudysha_preview_scope")
+    if not (isinstance(scope, str) and scope.strip()):
+        cwd = data.get("cwd")
+        scope = claudysha.scope_of(cwd) if cwd else claudysha.current_scope()
+    print(session_note(db, scope.strip()))
 
 
 def cmd_rescope(db, a):

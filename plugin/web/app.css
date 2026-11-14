@@ -223,3 +223,11 @@ pre.cmd {
 #toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
 .toast { padding: 10px 14px; border-radius: 6px; background: var(--text); color: var(--bg); box-shadow: var(--shadow); max-width: 380px; font-size: 13px; }
 .toast.error { background: var(--bad); color: #fff; }
+
+/* ---------- session preview */
+td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.bar-cell { width: 45%; vertical-align: middle; }
+.bar-track { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.bar { height: 100%; border-radius: 4px; background: var(--accent); }
+.stat .small-value { font-size: 16px; margin: 10px 0 6px; overflow-wrap: anywhere; }
+pre.injected { max-height: 420px; overflow: auto; font-size: 12px; line-height: 1.55; }

@@ -194,6 +194,63 @@
     },
   });
 
+  // ---------------------------------------------------------------- session preview
+  panel({
+    id: "session", title: "Session preview", icon: "🪄", order: 30,
+    async render(el) {
+      const body = h("div");
+      const picker = h("select", {});
+      let loaded = false;
+
+      async function load() {
+        body.replaceChildren(h("p", { class: "muted" }, "Running the session start…"));
+        const p = await act(null, () => api(`/api/plugin/session-preview?scope=${encodeURIComponent(picker.value)}`));
+        if (!p) { body.replaceChildren(); return; }
+        if (!loaded) {
+          picker.replaceChildren(h("option", { value: "" }, "A new folder (fresh session)"),
+            p.scopes.map((s) => h("option", { value: s.scope }, `${s.scope} (${s.count})`)));
+          loaded = true;
+        }
+        const max = Math.max(1, ...p.sections.map((s) => s.tokens));
+        const rows = p.sections.map((s) => h("tr", {},
+          h("td", {}, h("a", { href: `#sec-${s.source}`, onclick: (e) => { e.preventDefault(); document.getElementById(`sec-${s.source}`)?.scrollIntoView({ behavior: "smooth" }); } }, s.title)),
+          h("td", { class: "bar-cell", title: `${s.tokens} tokens` }, h("div", { class: "bar-track" }, sized(h("div", { class: "bar" }), s.tokens / max))),
+          h("td", { class: "num" }, s.tokens ? `≈ ${s.tokens.toLocaleString()}` : h("span", { class: "muted" }, "nothing")),
+          h("td", { class: "num muted" }, p.total ? `${Math.round((100 * s.tokens) / p.total)}%` : "")));
+
+        body.replaceChildren(
+          h("div", { class: "grid-cards" },
+            h("div", { class: "card stat accent" }, h("div", { class: "label" }, "Added to every session start"),
+              h("div", { class: "value" }, `≈ ${p.total.toLocaleString()}`), h("div", { class: "hint" }, "tokens, estimated")),
+            h("div", { class: "card stat" }, h("div", { class: "label" }, "Scope shown"),
+              h("div", { class: "value small-value mono" }, p.scope || "new folder"),
+              h("div", { class: "hint" }, p.scope ? "a session working in this repository or folder" : `a folder claudysha has never seen (${p.shown_scope})`))),
+          h("h2", {}, "Where the tokens go"),
+          h("div", { class: "card" }, h("table", { class: "list" },
+            h("tr", {}, h("th", {}, "Part"), h("th", {}, ""), h("th", { class: "num" }, "Tokens"), h("th", { class: "num" }, "Share")), rows)),
+          h("p", { class: "muted small" }, "Estimates: claudysha has no tokenizer, so counts can be off by about 15%. ",
+            "Claude Code adds its own system prompt and tools on top; this is only what claudysha adds. ",
+            "A skill's full instructions load only when it's used."),
+          ...p.sections.map((s) => h("section", { id: `sec-${s.source}` },
+            h("h2", {}, s.title, " ", h("span", { class: "pill" }, s.tokens ? `≈ ${s.tokens} tokens` : "prints nothing"),
+              " ", h("span", { class: "muted small mono" }, s.source)),
+            s.error ? h("p", { class: "note" }, `This part failed: ${s.error}`) : null,
+            s.text ? h("pre", { class: "cmd injected" }, s.text)
+              : h("p", { class: "muted small" }, s.kind === "hook" ? "Nothing printed for this session (for example, no backlog item is due, or dev mode is off)." : "No skill listed."))));
+      }
+      function sized(bar, ratio) { bar.style.width = `${Math.max(ratio * 100, ratio > 0 ? 1 : 0)}%`; return bar; }
+
+      picker.addEventListener("change", load);
+      el.append(
+        h("div", { class: "page-head" },
+          h("div", {}, h("h1", {}, "Session preview"),
+            h("p", {}, "What claudysha adds when a Claude Code session starts, exactly as the session receives it.")),
+          h("label", { class: "check" }, "Session in ", picker)),
+        body);
+      await load();
+    },
+  });
+
   window.addEventListener("hashchange", render);
   document.addEventListener("DOMContentLoaded", () => {
     panels.sort((a, b) => a.order - b.order);

@@ -8,7 +8,16 @@ settings and archives), and each module in claudysha.MODULES may add panels by e
     {"static": Path,                 # folder served at /static/<module>/
      "scripts": ["panel.js", ...],   # loaded by the page, in order; they call claudysha.panel(...)
      "routes": {("GET", "/api/<module>/..."): fn(query, body) -> JSON-able, ...},
-     "overview": fn() -> [{"label", "value", "hint"?}, ...]}   # cards on the overview (optional)
+     "overview": fn() -> [{"label", "value", "hint"?}, ...],   # cards on the overview (optional)
+     "scopes": fn() -> [{"scope", "count"}, ...],               # scopes the session preview offers
+     "session_labels": {"<hook script, relative to the repo>": "<title>", ...}}  # names its hooks
+
+The session preview runs the plugin's real SessionStart hooks (hooks/hooks.json) for a scope,
+so it shows exactly what a session receives, and estimates the tokens.
+
+One dashboard runs at a time. Its pid, port and link are kept in <claudysha home>/state/
+dashboard.json while it runs, so `claudysha dashboard -d` can start it in the background, and
+`claudysha dashboard status` / `stop` can find it again.
 
 A handler raises ValueError (or SystemExit, as the CLI helpers do) for a bad request: the page
 shows the message.
@@ -21,14 +30,21 @@ offered here on purpose: it needs the user's typed confirmation in a real termin
 request can always be replayed by any program that knows the URL. The page shows the command
 to run instead.
 """
+import contextlib
 import datetime as dt
 import hmac
 import http.server
 import json
+import math
 import mimetypes
+import os
+import re
 import secrets
 import shlex
+import signal
+import subprocess
 import sys
+import time
 import traceback
 import urllib.parse
 import webbrowser
@@ -117,11 +133,114 @@ def preview_load(query, body):
             "erased": erased, "command": f"claudysha load {shlex.quote(path)}"}
 
 
+# ---------------------------------------------------------------- session preview
+
+PREVIEW_TIMEOUT = 15
+SKILL_FIELD = re.compile(r"^(name|description|disable-model-invocation):\s*(.*)$")
+
+
+def estimate_tokens(text):
+    """A rough count of Claude tokens (no tokenizer in the standard library): short words are one
+    token, long ones a token per ~6 letters, each digit run a token per 3 digits, each symbol one,
+    each line break one. Close to real counts for English prose and Markdown, within ~15%."""
+    n = 0
+    for m in re.finditer(r"[^\W\d_]+|\d+|\n+|[^\w\s]|_", text):
+        s = m.group()
+        if s[0] == "\n":
+            n += 1
+        elif s[0].isdigit():
+            n += math.ceil(len(s) / 3)
+        elif s[0].isalpha():
+            n += math.ceil(len(s) / 6)
+        else:
+            n += 1
+    return n
+
+
+def session_hooks():
+    """The SessionStart commands of hooks/hooks.json, in order: [(command, timeout)]."""
+    hooks = json.loads((claudysha.REPO / "hooks" / "hooks.json").read_text())["hooks"]
+    return [(h["command"], h.get("timeout", 10)) for group in hooks.get("SessionStart", [])
+            for h in group.get("hooks", []) if h.get("type") == "command"]
+
+
+def hook_script(command):
+    """'"${CLAUDE_PLUGIN_ROOT}/memory/core.py" session-start' -> 'memory/core.py'."""
+    first = shlex.split(command)[0] if command.strip() else ""
+    return first.replace("${CLAUDE_PLUGIN_ROOT}/", "")
+
+
+def run_hook(command, timeout, scope, cwd):
+    """Run one SessionStart hook as Claude Code would, for a session in `scope`."""
+    env = {k: v for k, v in os.environ.items() if k not in ("MEM_NO_HOOK", "CLAUDE_PROJECT_DIR")}
+    env["CLAUDE_PLUGIN_ROOT"] = str(claudysha.REPO)
+    payload = {"hook_event_name": "SessionStart", "source": "startup", "cwd": str(cwd),
+               "session_id": "dashboard-preview", "claudysha_preview_scope": scope}
+    try:
+        proc = subprocess.run(command, shell=True, input=json.dumps(payload), capture_output=True, text=True,
+                              env=env, cwd=str(cwd), timeout=min(timeout, PREVIEW_TIMEOUT))
+    except subprocess.TimeoutExpired:
+        return "", f"timed out after {timeout}s"
+    return proc.stdout.strip(), (proc.stderr.strip()[-500:] if proc.returncode else "")
+
+
+def skill_listing():
+    """What Claude Code lists about the plugin's skills in every session: name and description
+    (skills with disable-model-invocation are only for the user, and not listed)."""
+    lines = []
+    for path in sorted((claudysha.REPO / "skills").glob("*/SKILL.md")):
+        meta, text = {}, path.read_text().splitlines()
+        if text and text[0].strip() == "---":
+            for line in text[1:]:
+                if line.strip() == "---":
+                    break
+                m = SKILL_FIELD.match(line)
+                if m:
+                    meta[m.group(1)] = m.group(2).strip()
+        if meta.get("disable-model-invocation", "").lower() == "true":
+            continue
+        lines.append(f"- claudysha:{meta.get('name') or path.parent.name}: {meta.get('description', '')}")
+    return "\n".join(lines)
+
+
+def fresh_scope():
+    """The scope of a folder claudysha has never seen (a folder outside git is scoped by its path)."""
+    return str(Path.home() / "new-project")
+
+
+def session_preview(specs):
+    labels = {"claudysha": "Plugin notes"}
+    for spec in specs:
+        labels.update(spec.get("session_labels", {}))
+
+    def run(query, body):
+        scope = (query.get("scope") or "").strip() or None
+        target = scope or fresh_scope()
+        sections = []
+        for command, timeout in session_hooks():
+            script = hook_script(command)
+            text, error = run_hook(command, timeout, target, Path.home())
+            sections.append({"title": labels.get(script, script), "kind": "hook", "source": script,
+                             "text": text, "error": error, "tokens": estimate_tokens(text)})
+        skills = skill_listing()
+        sections.append({"title": "Skill list", "kind": "skills", "source": "skills/*/SKILL.md",
+                         "text": skills, "error": "", "tokens": estimate_tokens(skills)})
+        scopes = []
+        for spec in specs:
+            if spec.get("scopes"):
+                scopes += spec["scopes"]()
+        return {"scope": scope, "shown_scope": target, "sections": sections,
+                "total": sum(s["tokens"] for s in sections), "scopes": scopes,
+                "dev_mode": claudysha.dev_mode()}
+    return run
+
+
 def plugin_spec(specs):
     return {"name": "plugin", "static": WEB, "scripts": [],
             "routes": {("GET", "/api/plugin/overview"): overview(specs),
                        ("POST", "/api/plugin/archive"): make_archive,
-                       ("GET", "/api/plugin/load-preview"): preview_load}}
+                       ("GET", "/api/plugin/load-preview"): preview_load,
+                       ("GET", "/api/plugin/session-preview"): session_preview(specs)}}
 
 
 def module_specs():
@@ -231,7 +350,7 @@ def make_server(port=DEFAULT_PORT, token=None, verbose=False):
             raise
         srv = Server(("127.0.0.1", 0), Handler)
     specs = module_specs()
-    specs.insert(0, plugin_spec(specs))
+    specs.insert(0, plugin_spec(specs))  # it sees the module specs (cards, scopes, hook labels)
     srv.verbose = verbose
     srv.token = token or secrets.token_urlsafe(24)
     srv.routes, srv.static, scripts = {}, {}, []
@@ -248,19 +367,143 @@ def make_server(port=DEFAULT_PORT, token=None, verbose=False):
     return srv
 
 
+# ---------------------------------------------------------------- running it
+
+def state_path():
+    return claudysha.state_dir() / "dashboard.json"
+
+
+def log_path():
+    return claudysha.state_dir() / "dashboard.log"
+
+
+def _alive(pid):
+    """Is `pid` a running claudysha dashboard? (Not just any process that reused the pid.)"""
+    try:
+        os.kill(pid, 0)
+    except (ProcessLookupError, PermissionError):
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return True  # no /proc (macOS): trust the pid
+    return b"dashboard" in cmdline
+
+
+def running():
+    """The running dashboard's state ({pid, port, url, started}), or None. Forgets a stale one."""
+    try:
+        st = json.loads(state_path().read_text())
+        pid = int(st["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if _alive(pid):
+        return st
+    state_path().unlink(missing_ok=True)
+    return None
+
+
+def write_state(srv):
+    path = state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # the link is the key
+    with os.fdopen(fd, "w") as f:
+        json.dump({"pid": os.getpid(), "port": srv.server_address[1], "url": srv.url,
+                   "started": dt.datetime.now().isoformat(timespec="seconds")}, f)
+    tmp.replace(path)
+
+
+def clear_state():
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        if json.loads(state_path().read_text()).get("pid") == os.getpid():
+            state_path().unlink()
+
+
+def open_link(url):
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+def _stop_signal(signum, frame):
+    raise KeyboardInterrupt
+
+
 def serve(port=DEFAULT_PORT, open_browser=True, verbose=False, out=print):
+    """Run the dashboard in this process until Ctrl+C or `claudysha dashboard stop`."""
+    st = running()
+    if st:
+        out(f"claudysha dashboard is already running: {st['url']}")
+        if open_browser:
+            open_link(st["url"])
+        return
     srv = make_server(port, verbose=verbose)
+    write_state(srv)
+    signal.signal(signal.SIGTERM, _stop_signal)
     out(f"claudysha dashboard: {srv.url}")
-    out("Only this machine can reach it, and only with that link. Ctrl+C stops it.")
+    out("Only this machine can reach it, and only with that link. Ctrl+C (or `claudysha dashboard stop`) stops it.")
     sys.stdout.flush()
     if open_browser:
-        try:
-            webbrowser.open(srv.url)
-        except Exception:
-            pass
+        open_link(srv.url)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         out("\ndashboard stopped")
     finally:
         srv.server_close()
+        clear_state()
+
+
+def detach(port=DEFAULT_PORT, open_browser=True, out=print, wait=10):
+    """Start the dashboard in the background (it outlives this terminal) and print its link."""
+    st = running()
+    if st:
+        out(f"claudysha dashboard is already running: {st['url']}")
+        if open_browser:
+            open_link(st["url"])
+        return st
+    log_path().parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path(), "a") as log:
+        proc = subprocess.Popen([sys.executable, str(claudysha.REPO / "plugin" / "claudysha.py"), "dashboard",
+                                 "--no-open", "--port", str(port)],
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline:
+        st = running()
+        if st and st["pid"] == proc.pid:
+            out(f"claudysha dashboard: {st['url']}")
+            out("Running in the background. `claudysha dashboard status` shows the link again, "
+                "`claudysha dashboard stop` stops it.")
+            if open_browser:
+                open_link(st["url"])
+            return st
+        if proc.poll() is not None:
+            break
+        time.sleep(0.1)
+    tail = log_path().read_text(errors="replace").splitlines()[-5:] if log_path().exists() else []
+    raise SystemExit("the dashboard didn't start" + (":\n" + "\n".join(tail) if tail else ""))
+
+
+def stop(out=print, wait=5):
+    st = running()
+    if not st:
+        out("claudysha dashboard is not running")
+        return False
+    os.kill(st["pid"], signal.SIGTERM)
+    deadline = time.monotonic() + wait
+    while time.monotonic() < deadline and _alive(st["pid"]):
+        time.sleep(0.1)
+    if _alive(st["pid"]):
+        raise SystemExit(f"the dashboard (pid {st['pid']}) didn't stop")
+    state_path().unlink(missing_ok=True)
+    out("claudysha dashboard stopped")
+    return True
+
+
+def status(out=print):
+    st = running()
+    out(f"claudysha dashboard is running since {st['started'].replace('T', ' ')}: {st['url']}" if st
+        else "claudysha dashboard is not running")
+    return st

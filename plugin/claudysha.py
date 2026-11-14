@@ -622,7 +622,10 @@ def main():
     s.add_argument("action", choices=["check", "off", "on", "status"])
     s.add_argument("--minutes", type=int, default=GUARD_PAUSE_MINUTES, help="how long `off` lasts")
     s = sub.add_parser("dashboard", help="open the dashboard: a local web page to review and browse "
-                       "memories, see settings and archives (Ctrl+C stops it)")
+                       "memories, preview what sessions receive, see settings and archives")
+    s.add_argument("action", nargs="?", choices=["stop", "status"],
+                   help="stop: stop the running dashboard; status: show its link")
+    s.add_argument("-d", "--detach", action="store_true", help="run it in the background")
     s.add_argument("-p", "--port", type=int, default=8765, help="port on 127.0.0.1 (another one if taken)")
     s.add_argument("--no-open", action="store_true", help="print the link without opening the browser")
     s.add_argument("-v", "--verbose", action="store_true", help="log each request")
@@ -665,8 +668,16 @@ def main():
             print(f"guard paused until {paused:%H:%M}" if paused else "guard on")
     elif a.cmd == "dashboard":
         import dashboard
-        init(wait=False)
-        dashboard.serve(a.port, open_browser=not a.no_open, verbose=a.verbose)
+        if a.action == "stop":
+            dashboard.stop()
+        elif a.action == "status":
+            dashboard.status()
+        elif a.detach:
+            init(wait=False)
+            dashboard.detach(a.port, open_browser=not a.no_open)
+        else:
+            init(wait=False)
+            dashboard.serve(a.port, open_browser=not a.no_open, verbose=a.verbose)
     elif a.cmd == "dev":
         if a.action == "status":
             print(f"dev mode {'on' if dev_mode() else 'off'}")

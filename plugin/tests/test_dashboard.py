@@ -28,6 +28,9 @@ class DashboardTest(unittest.TestCase):
         cls.env.start()
         claudysha.init()
         cls.srv = dashboard.make_server(port=0, token="secret-token")
+        # The store module reads its database path once, at its first import: point it here.
+        store = sys.modules["mem"]
+        store.DB_PATH, store.LOG_PATH = cls.tmp / "memory.db", cls.tmp / "extract.log"
         cls.port = cls.srv.server_address[1]
         cls.thread = threading.Thread(target=cls.srv.serve_forever, daemon=True)
         cls.thread.start()
@@ -112,6 +115,100 @@ class DashboardTest(unittest.TestCase):
         self.assertTrue(prev["command"].startswith("claudysha load "))
         self.assertEqual(self.request("GET", "/api/plugin/load-preview?name=../../etc/passwd")[0], 400)
         self.assertFalse(any("load" in p and m == "POST" for m, p in self.srv.routes))
+
+
+class TestSessionPreview(DashboardTest):
+    """Runs the real SessionStart hooks against the temporary home."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        sys.path.insert(0, str(claudysha.REPO / "memory" / "store"))
+        import mem
+        db = mem.connect()
+        mem.insert(db, "Robin wants commit messages in English", "preference", "webapp")
+        mem.insert(db, "Robin likes short answers", "preference", "global")
+        db.close()
+        (claudysha.data_dir() / "brain" / "core.md").write_text("# Core\n\n- Robin builds a webapp.\n")
+
+    def preview(self, scope=""):
+        status, data, _ = self.request("GET", f"/api/plugin/session-preview?scope={scope}")
+        self.assertEqual(status, 200, data)
+        return data, {s["source"]: s for s in data["sections"]}
+
+    def test_scope_rules_only_in_that_scope(self):
+        data, parts = self.preview("webapp")
+        self.assertEqual(data["scope"], "webapp")
+        memory = parts["mem"]["text"]
+        self.assertIn("commit messages in English", memory)
+        self.assertIn("short answers", memory)
+        self.assertIn("Robin builds a webapp", parts["memory/core.py"]["text"])
+        self.assertEqual(parts["memory/core.py"]["title"], "Core memory")
+        self.assertIn("webapp", [s["scope"] for s in data["scopes"]])
+
+    def test_fresh_session(self):
+        data, parts = self.preview()
+        self.assertIsNone(data["scope"])
+        self.assertNotIn("commit messages in English", parts["mem"]["text"])
+        self.assertIn("short answers", parts["mem"]["text"])
+        self.assertIn(dashboard.fresh_scope(), parts["mem"]["text"])
+
+    def test_tokens_and_skills(self):
+        data, parts = self.preview()
+        self.assertEqual(data["total"], sum(s["tokens"] for s in data["sections"]))
+        self.assertGreater(parts["mem"]["tokens"], 0)
+        skills = parts["skills/*/SKILL.md"]["text"]
+        self.assertIn("claudysha:recall:", skills)
+        self.assertNotIn("memory-review", skills)  # for the user only: not listed to the model
+        self.assertFalse(any(s["error"] for s in data["sections"]), data["sections"])
+
+
+class TestTokens(unittest.TestCase):
+    def test_estimate(self):
+        self.assertEqual(dashboard.estimate_tokens(""), 0)
+        self.assertEqual(dashboard.estimate_tokens("the cat sat"), 3)
+        self.assertEqual(dashboard.estimate_tokens("configuration"), 3)
+        self.assertEqual(dashboard.estimate_tokens("port 8080!\n"), 5)
+        prose = "Search your memory before answering about past work or redoing something. " * 20
+        self.assertTrue(len(prose) / 6 < dashboard.estimate_tokens(prose) < len(prose) / 3)
+
+
+class TestDetach(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        env = mock.patch.dict(os.environ, {"CLAUDYSHA_HOME": str(self.tmp / "home"),
+                                           "CLAUDYSHA_CONFIG": str(self.tmp / "claudysha.conf"),
+                                           "MEM_DB": str(self.tmp / "memory.db")})
+        env.start()
+        self.addCleanup(env.stop)
+        claudysha.init()
+        self.out = []
+        self.addCleanup(lambda: dashboard.running() and dashboard.stop(out=self.out.append))
+
+    def test_detach_status_stop(self):
+        st = dashboard.detach(port=0, open_browser=False, out=self.out.append)
+        self.assertIn(st["url"], self.out[0])
+        self.assertEqual(os.stat(dashboard.state_path()).st_mode & 0o777, 0o600)
+        conn = http.client.HTTPConnection("127.0.0.1", st["port"], timeout=10)
+        conn.request("GET", "/", headers={"Host": f"127.0.0.1:{st['port']}"})
+        self.assertEqual(conn.getresponse().status, 200)
+        conn.close()
+        # A second start reuses it.
+        self.assertEqual(dashboard.detach(port=0, open_browser=False, out=self.out.append)["pid"], st["pid"])
+        self.assertIn("already running", self.out[-1])
+        self.assertEqual(dashboard.status(out=self.out.append)["pid"], st["pid"])
+        self.assertTrue(dashboard.stop(out=self.out.append))
+        self.assertFalse(dashboard._alive(st["pid"]))
+        self.assertIsNone(dashboard.running())
+        self.assertFalse(dashboard.stop(out=self.out.append))
+        self.assertIn("not running", self.out[-1])
+
+    def test_stale_state_is_forgotten(self):
+        dashboard.state_path().parent.mkdir(parents=True, exist_ok=True)
+        dashboard.state_path().write_text(json.dumps({"pid": 2 ** 22 + 12345, "port": 1, "url": "x"}))
+        self.assertIsNone(dashboard.running())
+        self.assertFalse(dashboard.state_path().exists())
 
 
 class TestArchivesFolder(unittest.TestCase):
