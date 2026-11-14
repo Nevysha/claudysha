@@ -87,10 +87,11 @@ Everything claudysha keeps lives in one folder, never in the plugin itself. Each
 
 ```
 ~/.claudysha/
-  brain/      Memory module: hand-written notes (its own git repo)
+  brain/      Memory module: core memory and backlog (its own git repo)
   memory/     Memory module: long-term store
-  backups/    yours: anything you want archived with the rest
 ```
+
+The folder is claudysha's alone: it is its memory, which sessions never open (see [guard](#guard)). Keep your own scripts and backups elsewhere, where sessions can use them.
 
 ## 📦 Archive and load
 
