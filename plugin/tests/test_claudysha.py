@@ -208,5 +208,57 @@ class TestArchiveLoad(HomeTest):
                 claudysha.tty_confirm("? ")
 
 
+class TestGuard(HomeTest):
+    def setUp(self):
+        super().setUp()
+        self.home.mkdir(parents=True)
+        self.conf.parent.mkdir(parents=True)
+        self.conf.write_text("user_name = Alex\n")
+
+    def denies(self, tool, cwd=None, **args):
+        event = {"tool_name": tool, "tool_input": args, "cwd": str(cwd or self.tmp)}
+        out = claudysha.guard_hook(json.dumps(event))
+        if out:
+            self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+        return bool(out)
+
+    def test_path_tools(self):
+        self.assertTrue(self.denies("Read", file_path=str(self.home / "brain/core.md")))
+        self.assertTrue(self.denies("Edit", file_path=str(self.home)))
+        self.assertTrue(self.denies("Write", file_path=str(self.conf)))
+        self.assertTrue(self.denies("Read", file_path="home/x", cwd=self.tmp))  # relative
+        self.assertTrue(self.denies("Read", file_path=str(self.tmp / "elsewhere/../home/x")))
+        self.assertTrue(self.denies("Grep", pattern="x", path=str(self.home)))
+        self.assertTrue(self.denies("Glob", pattern=str(self.home) + "/**/*.md"))
+        self.assertTrue(self.denies("Grep", pattern="x", cwd=self.home / "brain"))
+        self.assertFalse(self.denies("Read", file_path=str(self.tmp / "home2/x")))
+        self.assertFalse(self.denies("Grep", pattern="x", cwd=self.tmp))
+        self.assertFalse(self.denies("WebFetch", url=str(self.home)))
+
+    def test_bash(self):
+        self.assertTrue(self.denies("Bash", command=f"cat {self.home}/brain/core.md"))
+        self.assertTrue(self.denies("Bash", command=f"ls '{self.home}'"))
+        self.assertTrue(self.denies("Bash", command=f"cat {self.conf}"))
+        self.assertFalse(self.denies("Bash", command=f"ls {self.home}-backup.tar.gz"))
+        self.assertFalse(self.denies("Bash", command="mem search cache"))
+
+    def test_home_relative_spellings(self):
+        h = Path.home() / ".claudysha-test-guard"
+        with mock.patch.dict(os.environ, {"CLAUDYSHA_HOME": str(h)}):
+            for cmd in ("cat ~/.claudysha-test-guard/x", "ls $HOME/.claudysha-test-guard",
+                        "ls ${HOME}/.claudysha-test-guard/"):
+                self.assertTrue(self.denies("Bash", command=cmd), cmd)
+            self.assertTrue(self.denies("Read", file_path="~/.claudysha-test-guard/x"))
+
+    def test_settings_file_free_until_it_exists_and_guard_off(self):
+        self.conf.unlink()
+        self.assertFalse(self.denies("Write", file_path=str(self.conf)))
+        self.conf.write_text("guard = off\n")
+        self.assertFalse(self.denies("Read", file_path=str(self.home / "x")))
+
+    def test_bad_input_lets_the_call_through(self):
+        self.assertEqual(claudysha.guard_hook("not json"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

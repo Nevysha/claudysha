@@ -80,6 +80,113 @@ def session_start_text():
             f"{name}'s OK (the claudysha:recall skill explains how).\n\n" + text)
 
 
+# ---------------------------------------------------------------- commands
+# Sessions change core memory only through these (the plugin's guard keeps them out of the
+# files). Each change is committed in the brain folder's git repo, so it has a history.
+
+def commit(paths, message):
+    """Commit `paths` (in the brain folder) if it is a git repo. Returns True if committed."""
+    b = brain_dir()
+    if not (b / ".git").exists() or not shutil.which("git"):
+        return False
+    try:
+        rel = [str(Path(p).resolve().relative_to(b.resolve())) for p in paths]
+    except ValueError:  # not in the brain folder: nothing to commit there
+        return False
+    git = ["git", "-C", str(b)]
+    subprocess.run([*git, "add", "-A", "--", *rel], capture_output=True)
+    done = subprocess.run([*git, "commit", "-q", "-m", message, "--", *rel], capture_output=True)
+    return done.returncode == 0
+
+
+def _diff(before, after):
+    import difflib
+    lines = difflib.unified_diff(before.splitlines(), after.splitlines(), "before", "after", lineterm="", n=1)
+    return "\n".join(list(lines)[2:])
+
+
+def _sections(text):
+    return [line[3:].strip() for line in text.splitlines() if line.startswith("## ")]
+
+
+def add_line(text, line, section=None):
+    """Append `line` at the end of `section` (a `## ` heading), or of the whole text."""
+    lines = text.rstrip("\n").splitlines()
+    if section is None:
+        return "\n".join(lines + [line]) + "\n"
+    start = next((i for i, l in enumerate(lines)
+                  if l.startswith("## ") and l[3:].strip().lower() == section.strip().lower()), None)
+    if start is None:
+        raise ValueError(f"no section {section!r}; sections: " + ", ".join(_sections(text)))
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    return "\n".join(lines[:end] + [line] + lines[end:]) + "\n"
+
+
+def replace_once(text, old, new):
+    n = text.count(old)
+    if n != 1:
+        raise ValueError(f"the text to replace appears {n} times; it must appear exactly once "
+                         "(give more of it to make it unique)")
+    return text.replace(old, new)
+
+
+def remove_line(text, part):
+    lines = text.splitlines()
+    hits = [i for i, l in enumerate(lines) if part in l]
+    if len(hits) != 1:
+        raise ValueError(f"{len(hits)} lines contain that text; it must match exactly one")
+    return "\n".join(lines[:hits[0]] + lines[hits[0] + 1:]) + "\n"
+
+
+def change_core(fn, message):
+    """Apply fn(text) -> new text to core memory, commit, and return the diff."""
+    path = brain_dir() / "core.md"
+    with claudysha.home_lock():
+        before = path.read_text() if path.is_file() else ""
+        after = fn(before)
+        if after == before:
+            return ""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(after)
+        commit([path], message)
+    return _diff(before, after)
+
+
+def cli(argv=None, prog="mem core"):
+    """`mem core ...`: read and change core memory."""
+    import argparse
+    p = argparse.ArgumentParser(prog=prog, description="Core memory: who the user is and how to work "
+                                "together, shown at the start of every session. Change it only with the user's OK.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("show", help="print core memory")
+    s = sub.add_parser("add", help="add a line, at the end of a section or of the whole")
+    s.add_argument("line")
+    s.add_argument("--section", help="a section title, e.g. 'Working together'")
+    s = sub.add_parser("edit", help="replace a passage (it must appear exactly once)")
+    s.add_argument("--old", required=True)
+    s.add_argument("--new", required=True)
+    s = sub.add_parser("remove", help="remove the one line that contains this text")
+    s.add_argument("text")
+    for s in sub.choices.values():
+        if s.prog.split()[-1] != "show":
+            s.add_argument("-m", "--message", help="what changed, for the history")
+    a = p.parse_args(argv)
+    if a.cmd == "show":
+        path = brain_dir() / "core.md"
+        print(path.read_text().rstrip() if path.is_file() else "(core memory is empty)")
+        return
+    ops = {"add": lambda t: add_line(t, a.line, a.section),
+           "edit": lambda t: replace_once(t, a.old, a.new),
+           "remove": lambda t: remove_line(t, a.text)}
+    try:
+        diff = change_core(ops[a.cmd], f"docs(memory): {a.message or a.cmd + ' in core memory'}")
+    except ValueError as e:
+        raise SystemExit(f"nothing changed: {e}")
+    print(f"core memory updated:\n{diff}" if diff else "nothing changed")
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "init":
@@ -94,7 +201,7 @@ def main():
         if text:
             print(text)
     else:
-        raise SystemExit("usage: core.py init | session-start")
+        cli(sys.argv[1:], prog="core.py")
 
 
 if __name__ == "__main__":

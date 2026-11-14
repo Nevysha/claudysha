@@ -6,10 +6,15 @@
 home = ~/.claudysha
 
 # Who Claude works with. Used by the modules (prompts, session notes).
-user_name = Nevysha
-user_pronouns = she/her
+user_name = Alex
+user_pronouns = they/them
 
 # Memory module: during a session, extract memories once this many new transcript lines
 # piled up (checked after each reply). 0 turns it off: extraction then only runs at
 # compaction and at the end of the session.
 # memory_every_lines = 300
+
+# Guard: sessions reach claudysha's data only through its commands, never by opening its
+# files (reading, editing, searching, or shell commands naming them). This file is guarded
+# too. `off` lets sessions open them, for example to debug the plugin by hand.
+guard = on

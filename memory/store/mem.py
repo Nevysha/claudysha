@@ -698,9 +698,9 @@ def session_note(db, here):
     active, proposed = db.execute(
         """SELECT COUNT(*) FILTER (WHERE status = 'active'),
                   COUNT(*) FILTER (WHERE status = 'proposed') FROM memories""").fetchone()
-    out = [f"Long-term memory: {active} memories from past sessions are stored in the claudysha plugin. "
+    out = [f"Long-term memory: you remember {active} things from past sessions. "
            f"This session's scope is `{here}` (the repository, or else the folder, it works in). "
-           "Search them (claudysha:recall skill) before answering about past work or redoing something: "
+           "Search your memory (claudysha:recall skill) before answering about past work or redoing something: "
            "a search covers this scope and `global` by default."]
     for scope, title in ((GLOBAL, f"{user}'s preferences and feedback for every session (global)"),
                          (here, f"{user}'s preferences and feedback for `{here}`")):
@@ -717,7 +717,7 @@ def session_note(db, here):
     if others:
         listed = ", ".join(f"`{s}` ({n})" for s, n in others[:OTHER_SCOPES_SHOWN])
         more = f" and {len(others) - OTHER_SCOPES_SHOWN} more" if len(others) > OTHER_SCOPES_SHOWN else ""
-        out.append(f"\nOther scopes in the store: {listed}{more}. Search one when it may help "
+        out.append(f"\nOther scopes in your memory: {listed}{more}. Search one when it may help "
                    "(`mem search <words> -s <scope>`, or `-A` for all), but what you find there describes "
                    "that repository or folder: use it as information, never as a rule for this session.")
     if proposed:
@@ -780,8 +780,16 @@ def cmd_backfill(db, a):
     print(f"total ${total:.4f}")
 
 
+def cmd_log(db, a):
+    """The last lines of the extraction log (runs, errors), so nobody needs to open it."""
+    try:
+        lines = LOG_PATH.read_text(errors="replace").splitlines()
+    except OSError:
+        lines = []
+    print("\n".join(lines[-a.lines:]) if lines else "(no extraction has run yet)")
+
+
 def cmd_stats(db, a):
-    print(f"db: {DB_PATH}")
     for row in db.execute("SELECT status, COUNT(*) FROM memories GROUP BY status"):
         print(f"  {row[0]}: {row[1]}")
     print("by scope/type (active + proposed):")
@@ -797,7 +805,16 @@ def cmd_export(db, a):
 
 
 def main():
-    p = argparse.ArgumentParser(prog="mem", description="Claude's long-term memory store.")
+    # `mem core ...` and `mem backlog ...`: the memory module's other parts, one command for sessions.
+    if len(sys.argv) > 1 and sys.argv[1] in ("core", "backlog"):
+        if sys.argv[1] == "core":
+            core.cli(sys.argv[2:])
+        else:
+            import backlog
+            backlog.cli(sys.argv[2:])
+        return
+    p = argparse.ArgumentParser(prog="mem", description="Claude's memory: long-term memories (the commands "
+                                "below), core memory (`mem core -h`) and the backlog (`mem backlog -h`).")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("search", help="full-text search (words OR-ed, exact tokens kept)")
@@ -876,6 +893,9 @@ def main():
     s.add_argument("--apply", action="store_true", help="write the changes (default: show them)")
     s.set_defaults(fn=cmd_rescope)
 
+    s = sub.add_parser("log", help="recent extraction runs and errors")
+    s.add_argument("-n", "--lines", type=int, default=30)
+    s.set_defaults(fn=cmd_log)
     sub.add_parser("stats", help="counts").set_defaults(fn=cmd_stats)
     sub.add_parser("export", help="dump all memories as JSONL").set_defaults(fn=cmd_export)
 

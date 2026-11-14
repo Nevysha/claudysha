@@ -78,6 +78,8 @@ Claude Code runs a cached copy of the plugin, made for its version (`version` in
 | `home` | `~/.claudysha` | plugin | the data folder (`CLAUDYSHA_HOME` overrides it) |
 | `user_name` | `the user` | modules | how Claude refers to you |
 | `user_pronouns` | `they/them` | modules | your pronouns |
+| `guard` | `on` | plugin | keep sessions out of the data folder and this file ([guard](#guard)) |
+| `memory_every_lines` | `300` | memory | extract during a session once this many new transcript lines piled up (`0`: only at compaction and at the end) |
 
 ## 📁 Data folder
 
@@ -100,6 +102,16 @@ Everything claudysha keeps lives in one folder, never in the plugin itself. Each
 - The archive covers every module. SQLite databases are copied consistently even while being written, and a `claudysha-archive.json` manifest identifies the archive.
 - `load` erases everything that isn't in the archive. It lists what would be erased and only proceeds when you **type `erase` in a terminal**. It refuses piped input, which stops accidental or scripted confirmations; a program could still fake a terminal, so the rest is a rule: Claude must never confirm a load for you. Before replacing anything it saves the current folder next to it (`~/.claudysha-before-load-<date>.tar.gz`). It rejects archives with absolute or `..` paths, links, or no manifest.
 - Modules that write in the background take a shared lock on the data folder, and `load` an exclusive one, so they never overlap.
+
+<a id="guard"></a>
+
+## 🛡️ Guard
+
+Think of a brain: you can remember things, but you can't open your head to look inside. Sessions work the same way. They reach their memory only through the modules' commands (`mem search`, `mem core ...`, `mem backlog ...`), and what the plugin shows them talks about "long-term memory", "core memory" and "backlog", never about files, folders or how it works. So it makes sense to someone who never looked inside the plugin, and Claude never edits its memory by hand.
+
+A PreToolUse hook (`claudysha guard`) enforces it: it refuses Read, Edit, Write, Grep, Glob and shell commands that touch the data folder or the settings file (so a session can't turn the guard off), and points Claude to the commands. Path tools are checked by resolving their path; shell commands by looking for the folder's path in the text, which stops mistakes rather than someone set on getting in (the rest is a rule in the skill: never work around it). The settings file is free until it exists, so Claude can still write it when installing claudysha for you.
+
+To look inside yourself, use your own terminal; to let sessions in (say, to debug the plugin), set `guard = off`. For diagnostics there are commands: `mem log` (recent extraction runs and errors) and `mem stats`.
 
 ## 🧩 How modules plug in
 
@@ -136,7 +148,7 @@ It has three parts:
 
 The split matters: the long-term store can capture generously because it's never loaded wholesale, while the core, which shapes how Claude behaves, stays small and only changes with your OK. `brain/` is a git repo, so every change to the hand-written notes has a history.
 
-What a session sees talks about "core memory", "long-term memory" and "backlog", not about files and folders, so it makes sense to someone who never looked inside the plugin. The `claudysha:recall` skill tells Claude where each part lives when it needs to change one.
+Sessions see none of these files: they use the `mem` commands below, which the `claudysha:recall` skill teaches them (see [guard](#guard)).
 
 <a id="long-term-store"></a>
 
@@ -193,14 +205,19 @@ mem approve <id...>  |  mem reject <id...>
 mem ingest <transcript.jsonl> [--dry-run]
 mem backfill [--project-dir <folder under ~/.claude/projects>]
 mem rescope [--apply]            # file memories under the scope of their session
-mem stats  |  mem export          # JSONL dump
+mem stats  |  mem log  |  mem export   # counts, recent extraction runs, JSONL dump
+
+mem core show | add "<line>" [--section ...] | edit --old ... --new ... | remove "<text>"
+mem backlog list [-a] | show <id> | add "<summary>" [--review-after ...] [--details ...] | update <id> ... | done <id>
 ```
+
+`mem core` and `mem backlog` commit each change in `brain/` with a Conventional Commit (`docs(memory): ...`, `docs(backlog): ...`).
 
 <a id="core-memory"></a>
 
 ## ✍️ Core memory
 
-`brain/core.md` holds who you are and how you want Claude to work with you. At session start (and again after a compaction), `memory/core.py` prints it into the session, so it shapes every session. You write it (or approve Claude's edits); keep it short. Facts belong in the long-term store, which is searched instead of loaded.
+`brain/core.md` holds who you are and how you want Claude to work with you. At session start (and again after a compaction), `memory/core.py` prints it into the session, so it shapes every session. You write it, or approve Claude's changes through `mem core`; keep it short. Facts belong in the long-term store, which is searched instead of loaded.
 
 Older versions also kept topic notes in `brain/memories/`, indexed in `MEMORY.md`. The long-term store replaced them: the folder is no longer created or loaded, but an existing one is left in place (and archived) as history.
 
@@ -219,7 +236,7 @@ summary: one line
 ---
 ```
 
-At session start, `memory/backlog.py` lists the open or waiting notes whose `review-after` date has passed, so postponed work comes back on its own. `memory/backlog.py list` shows them all.
+At session start, `memory/backlog.py` lists the open or waiting notes whose `review-after` date has passed (by summary, without file names), so postponed work comes back on its own. Sessions manage it with `mem backlog`; an item's id is its note's name without `.md`.
 
 ## 🪝 What the module adds to a session
 
@@ -229,7 +246,7 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | SessionStart: `mem session-start` (a line saying the store exists, and how many memories wait for review) | long-term store |
 | SessionStart: `memory/backlog.py session-start` | backlog |
 | SessionEnd, PreCompact and Stop: `mem hook` (Stop only every `memory_every_lines` new transcript lines) | long-term store |
-| `claudysha:recall` skill: how to search, save and correct memories, and change the core memory or backlog | long-term store, core memory, backlog |
+| `claudysha:recall` skill: the `mem` commands for all three parts | long-term store, core memory, backlog |
 | `/claudysha:memory-review` skill: review proposed memories in the chat | long-term store |
 
 ## 🛣️ Not done yet

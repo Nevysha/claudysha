@@ -275,7 +275,7 @@ class TestIngest(TranscriptTest):
         here = Path(self.tmp.name).resolve()
         self.add("a fact")
         out = self.session_start(here)
-        self.assertIn("1 memories", out)
+        self.assertIn("you remember 1 things", out)
         self.assertIn(f"scope is `{here}`", out)
         self.assertNotIn("proposed", out)
         self.add("be brief", "feedback", "global", status="proposed")

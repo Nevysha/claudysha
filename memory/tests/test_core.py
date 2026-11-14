@@ -54,5 +54,39 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(core.session_start_text(), "")
 
 
+    def run_cli(self, *argv):
+        import io
+        from contextlib import redirect_stdout
+        with redirect_stdout(io.StringIO()) as out:
+            core.cli(list(argv))
+        return out.getvalue()
+
+    def test_core_commands(self):
+        import subprocess
+        self.write("brain/core.md", "# Core\n\n## Who\n\n- Alex\n\n## Working together\n\n- be nice\n")
+        b = self.home / "brain"
+        subprocess.run(["git", "init", "-q", str(b)], check=True)
+        for k, v in (("user.email", "t@example.com"), ("user.name", "Test")):
+            subprocess.run(["git", "-C", str(b), "config", k, v], check=True)
+        self.assertIn("be nice", self.run_cli("show"))
+        out = self.run_cli("add", "- be brief", "--section", "working together", "-m", "brevity")
+        self.assertIn("+- be brief", out)
+        self.assertNotIn(str(self.home), out)
+        self.run_cli("add", "- in Who", "--section", "Who")
+        self.run_cli("edit", "--old", "be nice", "--new", "be kind")
+        self.run_cli("remove", "in Who")
+        self.assertEqual((b / "core.md").read_text(),
+                         "# Core\n\n## Who\n\n- Alex\n\n## Working together\n\n- be kind\n- be brief\n")
+        log = subprocess.run(["git", "-C", str(b), "log", "--format=%s"], capture_output=True, text=True).stdout
+        self.assertEqual(log.splitlines()[-1], "docs(memory): brevity")
+        self.assertEqual(len(log.splitlines()), 4)
+
+    def test_core_commands_refuse_ambiguous_changes(self):
+        self.write("brain/core.md", "- a x\n- b x\n")
+        for argv in (("edit", "--old", "x", "--new", "y"), ("remove", "x"), ("add", "z", "--section", "Nope")):
+            with self.assertRaises(SystemExit):
+                self.run_cli(*argv)
+        self.assertEqual((self.home / "brain/core.md").read_text(), "- a x\n- b x\n")
+
 if __name__ == "__main__":
     unittest.main()

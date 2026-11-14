@@ -7,7 +7,9 @@
   module keeps its data, and a lock modules take while writing;
 - the scope of a session: which repository (or folder) it works in;
 - setup and init (each module in MODULES creates its own part of the data folder);
-- archive and load of the whole data folder.
+- archive and load of the whole data folder;
+- the guard: a PreToolUse hook that keeps sessions out of the data folder and the settings
+  file, so they only reach their memory through the modules' commands.
 """
 import argparse
 import contextlib
@@ -16,6 +18,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -26,7 +29,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_HOME = "~/.claudysha"
-DEFAULTS = {"home": DEFAULT_HOME, "user_name": "the user", "user_pronouns": "they/them"}
+DEFAULTS = {"home": DEFAULT_HOME, "user_name": "the user", "user_pronouns": "they/them", "guard": "on"}
 GLOBAL_SCOPE = "global"
 ARCHIVE_FORMAT = 1
 MANIFEST = "claudysha-archive.json"
@@ -200,6 +203,84 @@ def init():
     return h
 
 
+# ---------------------------------------------------------------- guard
+
+# Like a brain: a session can remember (through the modules' commands) but never opens its
+# own memory. Path tools are checked by resolving their path; shell commands by looking for
+# the folder's path in the text, which catches mistakes, not someone determined to get in.
+GUARDED_TOOLS = {"Read": ("file_path",), "Edit": ("file_path",), "MultiEdit": ("file_path",),
+                 "Write": ("file_path",), "NotebookEdit": ("notebook_path",), "Grep": ("path",),
+                 "Glob": ("path", "pattern"), "LS": ("path",)}
+GUARD_REASON = ("That is where claudysha keeps its memory, which sessions never open directly. "
+                "Use the memory commands instead (see the claudysha:recall skill).")
+
+
+def guarded_paths():
+    """The data folder, and the settings file once it exists (install may still create it)."""
+    paths = [home()]
+    if config_path().exists():
+        paths.append(config_path())
+    return paths
+
+
+def _inside(path, roots):
+    for root in roots:
+        for r in {root, root.resolve()}:
+            if path == r or r in path.parents:
+                return True
+    return False
+
+
+def _spellings(path):
+    """How a shell command may spell `path`: absolute (as given and resolved), ~/..., $HOME/..."""
+    out = {str(path), str(path.resolve())}
+    for p in list(out):
+        with contextlib.suppress(ValueError):
+            rel = Path(p).relative_to(Path.home())
+            out |= {f"~/{rel}", f"$HOME/{rel}", f"${{HOME}}/{rel}"}
+    return out
+
+
+def guard_denies(event):
+    """True if this PreToolUse event (the hook JSON) touches a guarded path."""
+    if setting("guard").lower() in ("off", "no", "false", "0"):
+        return False
+    tool, args = event.get("tool_name", ""), event.get("tool_input") or {}
+    cwd = Path(event.get("cwd") or os.getcwd())
+    roots = guarded_paths()
+    if tool == "Bash":
+        cmd = str(args.get("command", ""))
+        return any(re.search(re.escape(s) + r"(?=$|[/\s\"'`;|&)<>])", cmd)
+                   for root in roots for s in _spellings(root))
+    keys = GUARDED_TOOLS.get(tool)
+    if not keys:
+        return False
+    for key in keys:
+        raw = args.get(key)
+        if not raw:
+            continue
+        raw = str(raw)
+        if key == "pattern":  # a glob: check the part before the first wildcard
+            raw = re.split(r"[*?\[{]", raw, maxsplit=1)[0] or "."
+        path = Path(os.path.expandvars(raw)).expanduser()
+        path = Path(os.path.normpath(path if path.is_absolute() else cwd / path))
+        if _inside(path, roots):
+            return True
+    # Grep or Glob without a path search the session's folder.
+    return tool in ("Grep", "Glob") and not args.get("path") and _inside(cwd, roots)
+
+
+def guard_hook(stdin_text):
+    """PreToolUse hook: the JSON that denies the call, or "" to let it through. Never fails closed."""
+    try:
+        if not guard_denies(json.loads(stdin_text)):
+            return ""
+    except Exception:
+        return ""
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                              "permissionDecisionReason": GUARD_REASON}})
+
+
 # ---------------------------------------------------------------- archive
 
 def archive(dest=None):
@@ -347,6 +428,7 @@ def main():
     s = sub.add_parser("load", help="replace the whole home with an archive (asks for confirmation)")
     s.add_argument("archive")
     sub.add_parser("session-start", help="for the SessionStart hook: make sure the data folder exists")
+    sub.add_parser("guard", help="for the PreToolUse hook: deny tool calls that open the data folder")
     a = p.parse_args()
 
     if a.cmd == "home":
@@ -364,6 +446,10 @@ def main():
         print(archive(a.dest))
     elif a.cmd == "load":
         load(a.archive, tty_confirm)
+    elif a.cmd == "guard":
+        out = guard_hook(sys.stdin.read())
+        if out:
+            print(out)
     elif a.cmd == "session-start":
         if os.environ.get("MEM_NO_HOOK"):
             return
