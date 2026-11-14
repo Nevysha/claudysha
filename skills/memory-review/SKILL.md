@@ -17,3 +17,5 @@ disable-model-invocation: true
 4. Never approve anything the user didn't approve. Summarise what changed at the end.
 
 The user can also review alone in a terminal with `${CLAUDE_PLUGIN_ROOT}/mem review` (one entry at a time, single keys).
+
+Or in the dashboard, a local web page: if they ask, start it for them with `${CLAUDE_PLUGIN_ROOT}/claudysha dashboard` as a background command (it runs until stopped) and give them the link it prints. The page is theirs: you keep using the `mem` commands above, never its link.

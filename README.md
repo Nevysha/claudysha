@@ -92,6 +92,7 @@ Everything claudysha keeps lives in one folder, never in the plugin's code:
 ~/.claudysha/
   bin/          the plugin's: the claudysha and mem commands (links to the repo), for your PATH
   state/        the plugin's: runtime state (the guard's pause in dev mode)
+  archives/     archives made from the dashboard
   data/         yours: archived, restored by load, never opened by sessions (see guard)
     brain/      Memory module: core memory and backlog (its own git repo)
     memory/     Memory module: long-term store
@@ -111,6 +112,22 @@ Older versions kept the data directly in `~/.claudysha`. The first run of a newe
 - The archive covers every module. SQLite databases are copied consistently even while being written, and a `claudysha-archive.json` manifest identifies the archive.
 - `load` erases everything that isn't in the archive. It lists what would be erased and only proceeds when you **type `erase` in a terminal**. It refuses piped input, which stops accidental or scripted confirmations; a program could still fake a terminal, so the rest is a rule: Claude must never confirm a load for you. Before replacing anything it saves the current data next to it (`~/.claudysha/data-before-load-<date>.tar.gz`). It rejects archives with absolute or `..` paths, links, or no manifest.
 - Modules that write in the background take a shared lock on the data folder, and `load` an exclusive one, so they never overlap.
+
+## 📊 Dashboard
+
+```
+claudysha dashboard [--port 8765] [--no-open]   # serves the page, opens your browser; Ctrl+C stops it
+```
+
+A local web page to look after claudysha without typing commands:
+
+- **Overview:** what it remembers at a glance, your settings, dev mode and guard status, and archives: an *Archive now* button and, for each archive, what restoring it would erase and the command to restore it.
+- **Review** (Memory module): the proposed memories, grouped by scope, with the session each came from and the stored memories that look related. Approve, reject or edit them one at a time or several at once.
+- **Memories** (Memory module): search and filter everything stored (scope, type, status, source, *never used*), and open a memory to see where it came from, what replaced it and what it replaced, then edit, replace or forget it.
+
+It's Python's standard library and one plain page, with nothing loaded from the internet. Only your machine can reach it: the server listens on `127.0.0.1` only (WSL forwards it to the Windows browser) and every request needs the random key in the link it prints, which changes at each start. It also refuses requests that name another host, which stops other websites from reaching it through your browser.
+
+Restoring an archive is never done from the page. `load` needs you to type `erase` in a real terminal, and a web request can always be replayed by any program that knows the link. So the page shows the command, and you run it yourself.
 
 <a id="guard"></a>
 
@@ -142,6 +159,7 @@ A module is a folder with:
 
 - an `init()` (registered in `MODULES` in `plugin/claudysha.py`) that creates its part of the data folder without overwriting anything,
 - its hooks in `hooks/hooks.json` and its skills in `skills/`,
+- optionally a `dashboard()` next to its `init()`, returning its dashboard panels: their scripts, their API routes and cards for the overview (see `plugin/dashboard.py`),
 - its own tests in `<module>/tests/`.
 
 Modules read the settings and the data folder path through `plugin/claudysha.py`. The plugin's own SessionStart hook (`claudysha session-start`) runs first and makes sure the data folder exists.
@@ -223,7 +241,7 @@ mem get <id...>
 mem list [-s scope] [-t type] [-n 20]
 mem supersede <id> "<new text>"  |  mem supersede <id> --by <id>
 mem edit <id> [--text ...] [-t ...] [-s ...] [--tags ...] [-c ...]
-mem review [-l]                   # one by one: a approve, r reject, e edit, t type, s skip, u undo (-l: list)
+mem review [-l]                   # (or the dashboard's Review page) one by one: a approve, r reject, e edit, t type, s skip, u undo (-l: list)
 mem approve <id...>  |  mem reject <id...>
 mem ingest <transcript.jsonl> [--dry-run]
 mem backfill [--project-dir <folder under ~/.claude/projects>]
@@ -284,8 +302,8 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | Path | What |
 |---|---|
 | `.claude-plugin/` | plugin manifest (`claudysha`) and the marketplace that lists it (`nevysha`) |
-| `plugin/` | the plugin: settings, data folder, setup, archive/load (`claudysha` is a symlink to `plugin/claudysha.py`) |
-| `memory/` | the Memory module: `core.py` (its folders, core memory), `backlog.py`, `store/` (long-term store: `mem.py`, `review.py`, `prompts/`; `mem` is a symlink to `store/mem.py`) |
+| `plugin/` | the plugin: settings, data folder, setup, archive/load (`claudysha` is a symlink to `plugin/claudysha.py`), the dashboard server (`dashboard.py`) and its page (`web/`) |
+| `memory/` | the Memory module: `core.py` (its folders, core memory), `backlog.py`, `panel.py` and `web/` (its dashboard pages), `store/` (long-term store: `mem.py`, `review.py`, `prompts/`; `mem` is a symlink to `store/mem.py`) |
 | `hooks/hooks.json`, `skills/` | what the plugin and its modules add to sessions |
 | `install.sh`, `claudysha.conf.example` | installation and settings reference |
 

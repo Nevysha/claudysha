@@ -6,6 +6,7 @@
 - the plugin's folder (~/.claudysha by default; CLAUDYSHA_HOME overrides it):
     bin/    the claudysha and mem commands (links to the repo), for the user's PATH
     state/  runtime state (the guard pause)
+    archives/  archives made from the dashboard
     data/   the user's data: every module keeps its part here; archived, restored by load,
             and guarded. Older versions kept it directly in the plugin's folder: init()
             moves it into data/ (see migrate());
@@ -15,6 +16,7 @@
 - archive and load of the whole data folder;
 - the guard: a PreToolUse hook that keeps sessions out of the data folder and the settings
   file, so they only reach their memory through the modules' commands;
+- the dashboard (dashboard.py): a local web page to browse and manage it all;
 - dev mode, for people working on claudysha itself: only the user turns it on (in a real
   terminal), and it gives sessions extra commands, like pausing the guard.
 """
@@ -105,7 +107,7 @@ def home():
     return Path(os.path.expandvars(raw)).expanduser()
 
 
-PLUGIN_ENTRIES = {"bin", "state", "data"}   # what the plugin's folder holds besides old-layout leftovers
+PLUGIN_ENTRIES = {"bin", "state", "data", "archives"}   # what the plugin's folder holds besides old-layout leftovers
 LEGACY_LINKS = ("brain", "memory")          # links left after migrate() for sessions running older code
 
 
@@ -619,6 +621,11 @@ def main():
     s = sub.add_parser("guard", help="the guard: check (PreToolUse hook), off/on (dev mode only), status")
     s.add_argument("action", choices=["check", "off", "on", "status"])
     s.add_argument("--minutes", type=int, default=GUARD_PAUSE_MINUTES, help="how long `off` lasts")
+    s = sub.add_parser("dashboard", help="open the dashboard: a local web page to review and browse "
+                       "memories, see settings and archives (Ctrl+C stops it)")
+    s.add_argument("-p", "--port", type=int, default=8765, help="port on 127.0.0.1 (another one if taken)")
+    s.add_argument("--no-open", action="store_true", help="print the link without opening the browser")
+    s.add_argument("-v", "--verbose", action="store_true", help="log each request")
     s = sub.add_parser("dev", help="dev mode, for working on claudysha itself (`on` asks you to confirm)")
     s.add_argument("action", choices=["on", "off", "status"])
     if len(sys.argv) == 1:
@@ -656,6 +663,10 @@ def main():
         else:
             paused = guard_paused_until()
             print(f"guard paused until {paused:%H:%M}" if paused else "guard on")
+    elif a.cmd == "dashboard":
+        import dashboard
+        init(wait=False)
+        dashboard.serve(a.port, open_browser=not a.no_open, verbose=a.verbose)
     elif a.cmd == "dev":
         if a.action == "status":
             print(f"dev mode {'on' if dev_mode() else 'off'}")

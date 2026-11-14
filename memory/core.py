@@ -68,6 +68,15 @@ def init():
         subprocess.run(["git", "init", "-q", "-b", "main", str(b)], check=True)
 
 
+def dashboard():
+    """The memory module's dashboard panels (plugin/dashboard.py calls this; see memory/panel.py)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("claudysha_memory_panel", Path(__file__).resolve().parent / "panel.py")
+    panel = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(panel)
+    return panel.spec()
+
+
 def session_start_text():
     """Core memory, as context for every session (no file paths: see the module docstring)."""
     core = brain_dir() / "core.md"
