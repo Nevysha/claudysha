@@ -162,6 +162,17 @@ class TestSessionPreview(DashboardTest):
         self.assertNotIn("memory-review", skills)  # for the user only: not listed to the model
         self.assertFalse(any(s["error"] for s in data["sections"]), data["sections"])
 
+    def test_on_demand_skills_are_shown_but_not_counted(self):
+        data, _ = self.preview()
+        bodies = {s["title"]: s for s in data["on_demand"]}
+        recall = bodies["claudysha:recall"]
+        self.assertIn("mem search", recall["text"])
+        self.assertNotIn("${CLAUDE_PLUGIN_ROOT}", recall["text"])
+        self.assertNotIn("name: recall", recall["text"])  # the body, without its frontmatter
+        self.assertEqual(recall["when"], "when Claude uses the skill")
+        self.assertEqual(bodies["claudysha:memory-review"]["when"], "when you run /claudysha:memory-review")
+        self.assertEqual(data["total"], sum(s["tokens"] for s in data["sections"]))
+
 
 class TestTokens(unittest.TestCase):
     def test_estimate(self):
@@ -203,6 +214,13 @@ class TestDetach(unittest.TestCase):
         self.assertIsNone(dashboard.running())
         self.assertFalse(dashboard.stop(out=self.out.append))
         self.assertIn("not running", self.out[-1])
+
+    def test_older_running_dashboard_is_reported(self):
+        st = dashboard.detach(port=0, open_browser=False, out=self.out.append)
+        with mock.patch.object(dashboard, "plugin_version", return_value="99.0.0"):
+            dashboard.detach(port=0, open_browser=False, out=self.out.append)
+        self.assertIn("older claudysha", self.out[-1])
+        self.assertEqual(dashboard.running()["pid"], st["pid"])  # reported, not restarted
 
     def test_stale_state_is_forgotten(self):
         dashboard.state_path().parent.mkdir(parents=True, exist_ok=True)

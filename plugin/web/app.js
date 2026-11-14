@@ -246,7 +246,17 @@
               " ", h("span", { class: "muted small mono" }, s.source)),
             s.error ? h("p", { class: "note" }, `This part failed: ${s.error}`) : null,
             s.text ? h("pre", { class: "cmd injected" }, s.text)
-              : h("p", { class: "muted small" }, s.kind === "hook" ? "Nothing printed for this session (for example, no backlog item is due, or dev mode is off)." : "No skill listed."))));
+              : h("p", { class: "muted small" }, s.kind === "hook" ? "Nothing printed for this session (for example, no backlog item is due, or dev mode is off)." : "No skill listed."))),
+          h("div", { class: "page-head" }, h("div", {}, h("h1", { class: "sub" }, "Loaded when used"),
+            h("p", {}, "Not part of the session start, so not in the total above. A skill's full instructions join the session ",
+              "the first time it's used, and stay for the rest of it. This is where sessions learn the memory commands."))),
+          p.on_demand.length ? h("div", { class: "card" }, h("table", { class: "list" },
+            h("tr", {}, h("th", {}, "Skill"), h("th", {}, "Loads"), h("th", { class: "num" }, "Tokens")),
+            p.on_demand.map((s) => h("tr", {}, h("td", {}, h("a", { href: `#sec-${s.source}`, onclick: (e) => { e.preventDefault(); document.getElementById(`sec-${s.source}`)?.scrollIntoView({ behavior: "smooth" }); } }, s.title)),
+              h("td", { class: "muted" }, s.when), h("td", { class: "num" }, `≈ ${s.tokens.toLocaleString()}`))))) : null,
+          p.on_demand.map((s) => h("section", { id: `sec-${s.source}` },
+            h("h2", {}, s.title, " ", h("span", { class: "pill" }, `≈ ${s.tokens} tokens`), " ", h("span", { class: "muted small" }, s.when)),
+            h("pre", { class: "cmd injected" }, s.text))));
       }
       function sized(bar, ratio) { bar.style.width = `${Math.max(ratio * 100, ratio > 0 ? 1 : 0)}%`; return bar; }
 

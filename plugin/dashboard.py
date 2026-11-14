@@ -184,23 +184,42 @@ def run_hook(command, timeout, scope, cwd):
     return proc.stdout.strip(), (proc.stderr.strip()[-500:] if proc.returncode else "")
 
 
-def skill_listing():
-    """What Claude Code lists about the plugin's skills in every session: name and description
-    (skills with disable-model-invocation are only for the user, and not listed)."""
-    lines = []
+def skills():
+    """The plugin's skills: [(name, frontmatter fields, body)]."""
+    out = []
     for path in sorted((claudysha.REPO / "skills").glob("*/SKILL.md")):
-        meta, text = {}, path.read_text().splitlines()
-        if text and text[0].strip() == "---":
-            for line in text[1:]:
+        meta, lines, body_start = {}, path.read_text().splitlines(), 0
+        if lines and lines[0].strip() == "---":
+            for i, line in enumerate(lines[1:], 1):
                 if line.strip() == "---":
+                    body_start = i + 1
                     break
                 m = SKILL_FIELD.match(line)
                 if m:
                     meta[m.group(1)] = m.group(2).strip()
-        if meta.get("disable-model-invocation", "").lower() == "true":
-            continue
-        lines.append(f"- claudysha:{meta.get('name') or path.parent.name}: {meta.get('description', '')}")
-    return "\n".join(lines)
+        out.append((meta.get("name") or path.parent.name, meta, "\n".join(lines[body_start:]).strip()))
+    return out
+
+
+def user_only(meta):
+    return meta.get("disable-model-invocation", "").lower() == "true"
+
+
+def skill_listing():
+    """What Claude Code lists about the plugin's skills in every session: name and description
+    (skills with disable-model-invocation are only for the user, and not listed)."""
+    return "\n".join(f"- claudysha:{name}: {meta.get('description', '')}"
+                     for name, meta, _ in skills() if not user_only(meta))
+
+
+def skill_bodies():
+    """What loads later, on demand: each skill's full instructions, when Claude uses it (or, for
+    user-only skills, when the user runs it), with the plugin's folder filled in."""
+    return [{"title": f"claudysha:{name}", "source": f"skills/{name}/SKILL.md",
+             "when": f"when you run /claudysha:{name}" if user_only(meta) else "when Claude uses the skill",
+             "text": (body := body_text.replace("${CLAUDE_PLUGIN_ROOT}", str(claudysha.REPO))),
+             "tokens": estimate_tokens(body)}
+            for name, meta, body_text in skills()]
 
 
 def fresh_scope():
@@ -229,7 +248,7 @@ def session_preview(specs):
         for spec in specs:
             if spec.get("scopes"):
                 scopes += spec["scopes"]()
-        return {"scope": scope, "shown_scope": target, "sections": sections,
+        return {"scope": scope, "shown_scope": target, "sections": sections, "on_demand": skill_bodies(),
                 "total": sum(s["tokens"] for s in sections), "scopes": scopes,
                 "dev_mode": claudysha.dev_mode()}
     return run
@@ -403,13 +422,30 @@ def running():
     return None
 
 
+def plugin_version():
+    try:
+        return json.loads((claudysha.REPO / ".claude-plugin" / "plugin.json").read_text()).get("version", "")
+    except (OSError, ValueError):
+        return ""
+
+
+def already_running(st, out, open_browser):
+    """Say a dashboard runs already (and if it's older than this code), and give its link."""
+    out(f"claudysha dashboard is already running: {st['url']}")
+    if st.get("version") != plugin_version():
+        out(f"It runs an older claudysha ({st.get('version') or 'unknown version'}, now {plugin_version()}): "
+            "restart it to get the changes (`claudysha dashboard stop`, then start it again).")
+    if open_browser:
+        open_link(st["url"])
+
+
 def write_state(srv):
     path = state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # the link is the key
     with os.fdopen(fd, "w") as f:
-        json.dump({"pid": os.getpid(), "port": srv.server_address[1], "url": srv.url,
+        json.dump({"pid": os.getpid(), "port": srv.server_address[1], "url": srv.url, "version": plugin_version(),
                    "started": dt.datetime.now().isoformat(timespec="seconds")}, f)
     tmp.replace(path)
 
@@ -435,9 +471,7 @@ def serve(port=DEFAULT_PORT, open_browser=True, verbose=False, out=print):
     """Run the dashboard in this process until Ctrl+C or `claudysha dashboard stop`."""
     st = running()
     if st:
-        out(f"claudysha dashboard is already running: {st['url']}")
-        if open_browser:
-            open_link(st["url"])
+        already_running(st, out, open_browser)
         return
     srv = make_server(port, verbose=verbose)
     write_state(srv)
@@ -460,9 +494,7 @@ def detach(port=DEFAULT_PORT, open_browser=True, out=print, wait=10):
     """Start the dashboard in the background (it outlives this terminal) and print its link."""
     st = running()
     if st:
-        out(f"claudysha dashboard is already running: {st['url']}")
-        if open_browser:
-            open_link(st["url"])
+        already_running(st, out, open_browser)
         return st
     log_path().parent.mkdir(parents=True, exist_ok=True)
     with open(log_path(), "a") as log:
