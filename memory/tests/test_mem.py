@@ -281,6 +281,21 @@ class TestIngest(TranscriptTest):
         self.assertEqual(self.extract_schemas[0]["properties"]["items"]["items"]["properties"]["scope"]["enum"],
                          ["homelab", "global"])
 
+    def test_extraction_sees_core_memory(self):
+        prompts = []
+        def run(system, prompt, schema):
+            prompts.append(prompt)
+            return {"items": []}, 0.001
+        with mock.patch.object(mem, "run_claude", side_effect=run):
+            mem.ingest(self.db, self.transcript(), "s1")
+            self.assertIn("<core_memory>\n(empty)\n</core_memory>", prompts[0])
+            brain = mem.core.brain_dir()
+            brain.mkdir(parents=True, exist_ok=True)
+            (brain / "core.md").write_text("- Never deploy on Fridays.\n")
+            mem.ingest(self.db, self.transcript(), "s2")
+        self.assertIn("<core_memory>\n- Never deploy on Fridays.\n</core_memory>", prompts[1])
+        self.assertIn("core memory already says", mem.prompt_text(mem.PROMPT_PATH))
+
     def test_scope_is_forced_to_the_session_or_global(self):
         item = [{"text": "A fact filed elsewhere", "type": "fact", "scope": "made-up", "confidence": 0.9}]
         with self.fake_claude(item):

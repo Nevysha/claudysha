@@ -456,7 +456,8 @@ def run_claude(system, prompt, schema):
 def call_model(excerpt, date, scope):
     prompt = (f"Excerpt date: {(date or 'unknown')[:10]}\n"
               f"This session's scope: {scope}\n\n"
-              f"<excerpt>\n{excerpt}\n</excerpt>\n\nExtract the memories.")
+              f"<excerpt>\n{excerpt}\n</excerpt>\n\n"
+              f"<core_memory>\n{core.core_text() or '(empty)'}\n</core_memory>\n\nExtract the memories.")
     out, cost = run_claude(prompt_text(PROMPT_PATH), prompt, extract_schema(scope))
     return out.get("items", []), cost
 
@@ -868,7 +869,8 @@ def commands_note(user):
             "- `mem search <words...> [-s <scope> | -A] [-t <type>]`: several words, exact tokens kept; "
             "`mem get <id...>` shows entries in full, `mem list [-s <scope>] [-t <type>]` the latest\n"
             "- `mem add \"<one fact, self-contained, with the why>\" -t <type> [-s global]`: types fact, "
-            "decision, dead_end, event, todo, preference, feedback; default scope is this session's\n"
+            "decision, dead_end, event, todo, preference, feedback; default scope is this session's. "
+            "Only what a session next week would want, not this session's state or what core memory says\n"
             "- `mem supersede <id> \"<corrected text>\"`: when a memory turned out wrong or outdated; "
             "`mem merge`, `mem split` for duplicates and entries stating several things\n"
             f"- `mem core show|add|edit|remove`: core memory, changed only with {user}'s OK\n"

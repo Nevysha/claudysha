@@ -1,6 +1,6 @@
 {
   "name": "claudysha",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "description": "A personal plugin for Claude Code that adapts to each user from their own sessions. Modules: Memory (automatic long-term store, core memory, backlog).",
   "author": {
     "name": "Nevysha"

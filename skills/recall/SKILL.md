@@ -41,6 +41,8 @@ ${CLAUDE_PLUGIN_ROOT}/mem supersede <id> "<corrected text>"
 
 `add` files the memory under this session's scope; `-s global` is for what holds everywhere. You remember sessions on your own as they go, so only add by hand what matters right away, or correct what you found wrong. Use absolute dates. Never store secrets.
 
+Only what a session next week would want: something still true then, that saves it from rediscovering it or repeating a mistake. Not the state of this session (what is running or open, what a check showed, "tested and pushed"), not instructions for this one task, and not what core memory already says.
+
 One fact per entry: each memory states one thing, with its reason. Two unrelated things are two `add`s. If what you want to add repeats a stored memory with more detail, `supersede` that memory instead of adding a second one.
 
 ```

@@ -194,7 +194,7 @@ It has three parts:
 | ✍️ [Core memory](#core-memory) | who you are, how you want Claude to work with you | `brain/core.md` | printed into every session |
 | ⏰ [Backlog](#backlog) | postponed ideas with a review date | `brain/maybe-later/` | due items listed at session start |
 
-The split matters: the long-term store can capture generously because it's never loaded wholesale, while the core, which shapes how Claude behaves, stays small and only changes with your OK. `brain/` is a git repo, so every change to the hand-written notes has a history.
+The split matters: the long-term store can hold much more because it's never loaded wholesale, while the core, which shapes how Claude behaves, stays small and only changes with your OK. `brain/` is a git repo, so every change to the hand-written notes has a history.
 
 Sessions see none of these files: they use the `mem` commands below, which the `claudysha:recall` skill teaches them (see [guard](#guard)).
 
@@ -210,7 +210,7 @@ Each memory has `text`, `type`, `scope`, `tags`, `confidence` (0 to 1), `status`
 
 - Types: `fact`, `decision`, `dead_end`, `event`, `todo`, `preference`, `feedback`.
 - Statuses: `active`, `proposed`, `superseded`, `rejected`. Extracted `preference` and `feedback` entries shape how Claude behaves, so they stay `proposed` until you approve them: `mem review` in a terminal (one at a time, single keys), or `/claudysha:memory-review` in a session.
-- One fact per entry: each memory states one thing, says it once, and is still true. Extraction aims for that (below), and `/claudysha:memory-cleanup` fixes what slips through: in a session, Claude goes over one scope (`mem similar` finds the entries that look alike, then it reads the whole list for outdated, contradicting and multi-fact entries) and fixes it. Changes that lose nothing (duplicates, merges, splits within one scope, never preferences or feedback) it applies directly and lists at the end; the rest (corrections, removals, scope changes) it asks about, one question per kind of change. Replaced entries stay as history, and `mem restore <id>` undoes any change.
+- One fact per entry: each memory states one thing, says it once, is still true, and is worth finding in a later session: not the state a session was in (what was running, what a check showed, "tested and pushed"), and not what core memory already says. Extraction aims for that (below), and `/claudysha:memory-cleanup` fixes what slips through: in a session, Claude goes over one scope (`mem similar` finds the entries that look alike, then it reads the whole list for outdated, contradicting and multi-fact entries, entries that only mattered during one session, and entries that repeat core memory) and fixes it. Changes that lose nothing (duplicates, merges, splits within one scope, never preferences or feedback) it applies directly and lists at the end; the rest (corrections, removals, scope changes) it asks about, one question per kind of change. Replaced entries stay as history, and `mem restore <id>` undoes any change.
 
 ### Scopes
 
@@ -234,7 +234,7 @@ Three hooks run `mem hook`: SessionEnd, PreCompact, and Stop (after each of Clau
 1. reads the transcript from where the last run stopped,
 2. skips sessions you never typed in (`claude -p` runs from scripts have no message with `origin.kind == "human"`),
 3. condenses it to the dialogue plus short tool hints (no tool output, no thinking); user-role messages that aren't yours (task notifications, summaries) are labelled as notes,
-4. asks Haiku (`claude -p --model haiku`, structured output, `memory/store/prompts/extract.md`) for memories,
+4. asks Haiku (`claude -p --model haiku`, structured output, `memory/store/prompts/extract.md`) for memories, with core memory beside the excerpt so it skips what core memory already says. The prompt asks for few items: only what a session next week would want, never the session's passing state or progress steps,
 5. sends each candidate with its closest stored memories to a second call (`memory/store/prompts/resolve.md`) that marks duplicates, memories it makes obsolete or repeats with more detail, and candidates that repeat a stored memory before adding a separate fact (only the added fact is kept),
 6. stores the rest and supersedes the obsolete ones.
 

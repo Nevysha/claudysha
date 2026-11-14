@@ -77,10 +77,15 @@ def dashboard():
     return panel.spec()
 
 
+def core_text():
+    """Core memory's text, or "" when there is none."""
+    core = brain_dir() / "core.md"
+    return core.read_text().strip() if core.is_file() else ""
+
+
 def session_start_text():
     """Core memory, as context for every session (no file paths: see the module docstring)."""
-    core = brain_dir() / "core.md"
-    text = core.read_text().strip() if core.is_file() else ""
+    text = core_text()
     if not text:
         return ""
     name, pronouns = claudysha.user_name(), claudysha.user_pronouns()

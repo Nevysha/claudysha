@@ -5,7 +5,7 @@ description: Go through one scope's long-term memories with the user to find dup
 
 # Clean up long-term memory with the user
 
-The goal: **one entry per fact**. Every memory states one thing (a fact, decision, dead end, event, todo, preference or feedback, with its reason), says it once, and is still true.
+The goal: **one entry per fact**. Every memory states one thing (a fact, decision, dead end, event, todo, preference or feedback, with its reason), says it once, is still true, and is worth finding in a later session.
 
 `mem` below is `${CLAUDE_PLUGIN_ROOT}/mem`.
 
@@ -17,6 +17,7 @@ This session's scope, unless the user names another one (`mem stats` lists them)
 
 - `mem similar [-s <scope>]`: groups of entries that look alike, with the `global` entries they repeat. A group is only a lead: read it and decide.
 - `mem list -s <scope> -n 500`: the whole scope, newest first. Read it for what `similar` can't see: a todo that is done, a state that changed later, two entries that contradict each other, an entry that strings several unrelated things together.
+- `mem core show`: core memory, which every session loads. Long-term entries that repeat it are noise.
 - `mem search <words> -s <scope>` around a lead finds the related entries worded differently, and `mem get <id...>` shows entries in full.
 
 Look for:
@@ -25,6 +26,8 @@ Look for:
 - **Overlaps:** an entry that repeats another one and adds something. Either merge them into one entry (same subject), or cut the repeated part out of the newer one (a separate fact).
 - **Outdated or contradicting:** a newer entry or the real system says otherwise. When it matters and you can check cheaply (a file, a command, the code), check before proposing. The fix is a corrected entry, or forgetting it if a newer one already says the right thing.
 - **Several things in one entry:** split it into one entry per thing.
+- **Only mattered during one session:** the state things were in at the moment (what was running, stopped or open, what a check or page showed, a link that has expired), progress steps ("tested, committed and pushed", "restarted"), instructions for one task that is over, several events for the steps of one happening. Forget it, or merge the steps into one event with its outcome. Keep what a later session still needs from it (a decision, a dead end, a lasting fact).
+- **Repeats core memory:** forget it, or keep only the detail it adds to the core line.
 - **Wrong scope or type:** a rule for every session filed under a repository, a fact filed as feedback.
 
 Leave alone what is merely related: two entries about the same system that state different facts are fine.
@@ -41,7 +44,7 @@ Only when all the entries concerned are in the same scope and none is a preferen
 
 ## 4. Ask about the rest, by kind
 
-Group the remaining proposals by kind (corrections, removals, cuts, merges and splits involving preferences, feedback or `global`, scope or type changes). Show each group as a numbered list: the ids and texts concerned (shortened if long), what's wrong, and the exact fix, with the new text when there is one. Then ask one question per group, with the question tool when you have one: **apply all**, **choose one by one**, or **skip all**. The user can also answer in their own words ("all but 3").
+Group the remaining proposals by kind (corrections, entries that only mattered during one session, entries that repeat core memory, other removals, cuts, merges and splits involving preferences, feedback or `global`, scope or type changes). Show each group as a numbered list: the ids and texts concerned (shortened if long), what's wrong, and the exact fix, with the new text when there is one. Then ask one question per group, with the question tool when you have one: **apply all**, **choose one by one**, or **skip all**. The user can also answer in their own words ("all but 3").
 
 For a group they want to go through one by one, present it in batches of about 5, each headed with where they are ("Batch 2 of 3", plus how many are left), and ask about each proposal (apply, skip, or change it).
 
@@ -53,7 +56,7 @@ For a group they want to go through one by one, present it in batches of about 5
 | Overlap, same subject: one entry for both | `mem merge <A> <B> [...] --text "<the one entry>"` |
 | Overlap, separate fact: cut the repeated part | `mem supersede <B> "<only what B adds>"` |
 | Outdated: corrected text | `mem supersede <id> "<corrected text>"` |
-| Wrong, and nothing replaces it | `mem reject <id>` |
+| Wrong, only mattered during one session, or already in core memory | `mem reject <id>` |
 | Several things in one entry | `mem split <id> "<first>" "<second>" [...]` |
 | Wrong scope or type | `mem edit <id> -s <scope>` / `mem edit <id> -t <type>` |
 
