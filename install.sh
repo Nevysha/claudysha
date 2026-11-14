@@ -3,15 +3,41 @@
 # Safe to run again: it skips the steps that are already done.
 #   ./install.sh            install (settings: ~/.config/claudysha/claudysha.conf, created from claudysha.conf.example)
 #   ./install.sh --dev      install, then turn dev mode on (asks you to confirm, see the README)
-#   ./install.sh --remove   uninstall (keeps the home folder)
+#   ./install.sh --path     install, and link `claudysha` and `mem` into ~/.local/bin without asking
+#   ./install.sh --remove   uninstall (keeps the home folder, removes those links)
+# In a terminal, it asks whether to add `claudysha` and `mem` to your PATH (links in ~/.local/bin).
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"   # claude's native install, also when run from Ansible
 dir="$(cd "$(dirname "$0")" && pwd)"
 plugin="claudysha@nevysha"
+bindir="$HOME/.local/bin"
+commands=(claudysha mem)
+
+# Our link in ~/.local/bin, or nothing: never touch a file we didn't put there.
+ours() { [ -L "$bindir/$1" ] && [ "$(readlink -f "$bindir/$1")" = "$(readlink -f "$dir/$1")" ]; }
+
+link_commands() {
+    mkdir -p "$bindir"
+    for c in "${commands[@]}"; do
+        if ours "$c"; then continue; fi
+        if [ -e "$bindir/$c" ] && [ ! -L "$bindir/$c" ]; then
+            echo "skipped $bindir/$c: a file of that name is already there" >&2; continue
+        fi
+        ln -sfn "$dir/$c" "$bindir/$c"   # a link to another clone is replaced by this one
+        echo "linked $bindir/$c"
+    done
+    case ":$PATH:" in
+        *":$bindir:"*) ;;
+        *) echo "note: $bindir is not on your PATH yet; add it in your shell's startup file" ;;
+    esac
+}
 
 if [ "${1:-}" = "--remove" ]; then
     claude plugin uninstall "$plugin" --keep-data 2>/dev/null || true
     claude plugin marketplace remove nevysha 2>/dev/null || true
+    for c in "${commands[@]}"; do
+        if ours "$c"; then rm "$bindir/$c"; echo "removed $bindir/$c"; fi
+    done
     echo "claudysha removed (its home folder is kept: $("$dir/claudysha" home))"
     exit 0
 fi
@@ -23,7 +49,17 @@ python3 -c 'import sqlite3; sqlite3.connect(":memory:").execute("create virtual 
 # Writes ~/.config/claudysha/claudysha.conf if missing (asks questions in a terminal, defaults
 # otherwise), then creates the home folder.
 "$dir/claudysha" setup
-if [ "${1:-}" = "--dev" ]; then
+
+# Commands on the PATH: --path says yes; otherwise ask, in a terminal only, when a link is missing.
+missing=no
+for c in "${commands[@]}"; do ours "$c" || missing=yes; done
+if [[ " $* " == *" --path "* ]]; then
+    link_commands
+elif [ "$missing" = yes ] && [ -t 0 ]; then
+    read -r -p "Add the claudysha and mem commands to your PATH (links in $bindir)? [Y/n] " answer
+    case "${answer:-y}" in [Yy]*) link_commands ;; *) echo "skipped: run them as $dir/claudysha and $dir/mem" ;; esac
+fi
+if [[ " $* " == *" --dev "* ]]; then
     "$dir/claudysha" dev on || true   # not confirmed: install anyway, dev mode stays off
 fi
 
