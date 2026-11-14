@@ -1,16 +1,18 @@
 """claudysha dashboard: a local web page where the user browses and manages claudysha.
 
-`claudysha dashboard` serves it on 127.0.0.1 and opens the browser. Layers stay apart like
-everywhere else: this file is the plugin's part (the server, the page shell, the overview with
-settings and archives), and each module in claudysha.MODULES may add panels by exposing
-`dashboard()` in its init file, returning a spec:
+`claudysha dashboard` serves it on 127.0.0.1 and opens the browser. The page is a React app
+(source in dashboard/, built into plugin/web/, which is committed so users need only Python).
+Layers stay apart like everywhere else: this file is the plugin's part (the server, the page, the
+overview with settings and archives), and each module in claudysha.MODULES may add to it by
+exposing `dashboard()` in its init file, returning a spec:
 
-    {"static": Path,                 # folder served at /static/<module>/
-     "scripts": ["panel.js", ...],   # loaded by the page, in order; they call claudysha.panel(...)
-     "routes": {("GET", "/api/<module>/..."): fn(query, body) -> JSON-able, ...},
+    {"routes": {("GET", "/api/<module>/..."): fn(query, body) -> JSON-able, ...},
+     "static": Path,                 # optional: a folder served at /static/<module>/
      "overview": fn() -> [{"label", "value", "hint"?}, ...],   # cards on the overview (optional)
      "scopes": fn() -> [{"scope", "count"}, ...],               # scopes the session preview offers
      "session_labels": {"<hook script, relative to the repo>": "<title>", ...}}  # names its hooks
+
+A module's pages live in the React app (dashboard/src/<module>/, listed in dashboard/src/panels.ts).
 
 The session preview runs the plugin's real SessionStart hooks (hooks/hooks.json) for a scope,
 so it shows exactly what a session receives, and estimates the tokens.
@@ -52,11 +54,11 @@ from pathlib import Path
 
 import claudysha
 
-WEB = Path(__file__).resolve().parent / "web"
+WEB = Path(__file__).resolve().parent / "web"  # the built page (dashboard/ is its source)
+mimetypes.add_type("font/woff2", ".woff2")  # older Pythons don't know it
 DEFAULT_PORT = 8765
 TOKEN_HEADER = "X-Claudysha-Token"
 MAX_BODY = 1_000_000
-SCRIPTS_MARK = "<!--claudysha:scripts-->"
 HEADERS = {
     "Content-Security-Policy": ("default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
                                 "base-uri 'none'; form-action 'none'"),
@@ -255,7 +257,7 @@ def session_preview(specs):
 
 
 def plugin_spec(specs):
-    return {"name": "plugin", "static": WEB, "scripts": [],
+    return {"name": "plugin", "static": WEB,
             "routes": {("GET", "/api/plugin/overview"): overview(specs),
                        ("POST", "/api/plugin/archive"): make_archive,
                        ("GET", "/api/plugin/load-preview"): preview_load,
@@ -372,14 +374,12 @@ def make_server(port=DEFAULT_PORT, token=None, verbose=False):
     specs.insert(0, plugin_spec(specs))  # it sees the module specs (cards, scopes, hook labels)
     srv.verbose = verbose
     srv.token = token or secrets.token_urlsafe(24)
-    srv.routes, srv.static, scripts = {}, {}, []
+    srv.routes, srv.static = {}, {}
     for spec in specs:
         srv.routes.update(spec.get("routes", {}))
         if spec.get("static"):
             srv.static[spec["name"]] = Path(spec["static"])
-        scripts += [f"/static/{spec['name']}/{s}" for s in spec.get("scripts", [])]
-    tags = "\n".join(f'<script defer src="{urllib.parse.quote(s)}"></script>' for s in scripts)
-    srv.index = (WEB / "index.html").read_text().replace(SCRIPTS_MARK, tags).encode()
+    srv.index = (WEB / "index.html").read_bytes()
     p = srv.server_address[1]
     srv.allowed_hosts = {f"127.0.0.1:{p}", f"localhost:{p}"}
     srv.url = f"http://127.0.0.1:{p}/#token={srv.token}"

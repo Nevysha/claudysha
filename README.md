@@ -132,7 +132,7 @@ A local web page to look after claudysha without typing commands:
 - **Session preview:** what claudysha adds when a session starts, exactly as the session receives it, for a session in any scope you pick or in a folder it has never seen, with an estimate of the tokens each part takes (the plugin's notes, core memory, long-term memory, the backlog, the skill list). It runs the plugin's real session-start hooks, so it can't drift from what sessions get. Below it, **Loaded when used** shows what joins a session later: each skill's full instructions (the recall skill is where sessions learn the memory commands), counted apart from the session start. The estimate is a heuristic, because the standard library has no tokenizer: expect it to be off by about 15%.
 - **Memories** (Memory module): search and filter everything stored (scope, type, status, source, *never used*), and open a memory to see where it came from, what replaced it and what it replaced, then edit, replace or forget it.
 
-It's Python's standard library and one plain page, with nothing loaded from the internet. Only your machine can reach it: the server listens on `127.0.0.1` only (WSL forwards it to the Windows browser) and every request needs the random key in the link it prints, which changes at each start (while it runs, the link is also kept in `state/`, readable only by you, so `status` can show it again; starting it again while an older version runs says so). It also refuses requests that name another host, which stops other websites from reaching it through your browser.
+The server is Python's standard library. The page is a React app built on the [@nevysha/ui](https://github.com/Nevysha/design-system) design system; it comes already built (`plugin/web/`), so you need nothing but Python, and it loads nothing from the internet (the font is bundled). It follows your system's light or dark setting. Only your machine can reach it: the server listens on `127.0.0.1` only (WSL forwards it to the Windows browser) and every request needs the random key in the link it prints, which changes at each start (while it runs, the link is also kept in `state/`, readable only by you, so `status` can show it again; starting it again while an older version runs says so). It also refuses requests that name another host, which stops other websites from reaching it through your browser.
 
 Restoring an archive is never done from the page. `load` needs you to type `erase` in a real terminal, and a web request can always be replayed by any program that knows the link. So the page shows the command, and you run it yourself.
 
@@ -166,7 +166,7 @@ A module is a folder with:
 
 - an `init()` (registered in `MODULES` in `plugin/claudysha.py`) that creates its part of the data folder without overwriting anything,
 - its hooks in `hooks/hooks.json` and its skills in `skills/`,
-- optionally a `dashboard()` next to its `init()`, returning its dashboard panels: their scripts, their API routes and cards for the overview (see `plugin/dashboard.py`),
+- optionally a `dashboard()` next to its `init()`, returning its dashboard API routes and cards for the overview (see `plugin/dashboard.py`), with its pages in the dashboard app (`dashboard/src/<module>/`),
 - its own tests in `<module>/tests/`.
 
 Modules read the settings and the data folder path through `plugin/claudysha.py`. The plugin's own SessionStart hook (`claudysha session-start`) runs first and makes sure the data folder exists.
@@ -317,8 +317,9 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | Path | What |
 |---|---|
 | `.claude-plugin/` | plugin manifest (`claudysha`) and the marketplace that lists it (`nevysha`) |
-| `plugin/` | the plugin: settings, data folder, setup, archive/load (`claudysha` is a symlink to `plugin/claudysha.py`), the dashboard server (`dashboard.py`) and its page (`web/`) |
-| `memory/` | the Memory module: `core.py` (its folders, core memory), `backlog.py`, `panel.py` and `web/` (its dashboard pages), `store/` (long-term store: `mem.py`, `review.py`, `prompts/`; `mem` is a symlink to `store/mem.py`) |
+| `plugin/` | the plugin: settings, data folder, setup, archive/load (`claudysha` is a symlink to `plugin/claudysha.py`), the dashboard server (`dashboard.py`) and its built page (`web/`, made from `dashboard/`) |
+| `memory/` | the Memory module: `core.py` (its folders, core memory), `backlog.py`, `panel.py` (its dashboard API), `store/` (long-term store: `mem.py`, `review.py`, `prompts/`; `mem` is a symlink to `store/mem.py`) |
+| `dashboard/` | the dashboard page's source: React + TypeScript on `@nevysha/ui`, built with pnpm into `plugin/web/` (`src/plugin/`, `src/memory/`: each layer's pages) |
 | `hooks/hooks.json`, `skills/` | what the plugin and its modules add to sessions |
 | `install.sh`, `claudysha.conf.example` | installation and settings reference |
 
@@ -329,7 +330,7 @@ python3 -m unittest discover -s plugin/tests
 python3 -m unittest discover -s memory/tests
 ```
 
-Standard library only; model calls are mocked. Scheduled archives and an off-machine copy are not done yet.
+Standard library only; model calls are mocked. The dashboard page has its own checks: `cd dashboard && pnpm install && pnpm check` (types, lint, tests), and `pnpm build` writes `plugin/web/`. Scheduled archives and an off-machine copy are not done yet.
 
 ## 📜 License
 

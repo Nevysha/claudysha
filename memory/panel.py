@@ -1,7 +1,7 @@
 """Memory module: its dashboard panels (see plugin/dashboard.py for the spec).
 
-Two panels, in memory/web/memory.js: the review queue (proposed memories) and the memory
-browser. The routes below reuse the store's own functions, so the dashboard and `mem` behave
+Two pages, in the dashboard's React app (dashboard/src/memory/): the review queue (proposed
+memories) and the memory browser. The routes below reuse the store's own functions, so the dashboard and `mem` behave
 the same. Browsing doesn't count as use (only a session's `mem search` does), and every write
 takes the plugin's shared lock, so it never overlaps a `claudysha load`.
 """
@@ -226,8 +226,6 @@ def overview_cards():
 
 def spec():
     return {
-        "static": HERE / "web",
-        "scripts": ["memory.js"],
         "routes": {
             ("GET", "/api/memory/summary"): summary,
             ("GET", "/api/memory/proposed"): proposed,

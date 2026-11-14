@@ -1,0 +1,3 @@
+# node_modules holds only links into pnpm's global store, so it stays tiny: Claude Code copies the
+# whole repo folder (dashboard/ included) into its plugin cache for every version.
+enableGlobalVirtualStore: true

@@ -2,6 +2,7 @@
 import http.client
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -61,13 +62,15 @@ class DashboardTest(unittest.TestCase):
             payload = raw.decode()
         return res.status, payload, res
 
-    def test_page_loads_module_scripts_with_strict_headers(self):
+    def test_page_loads_its_built_script_with_strict_headers(self):
         status, page, res = self.request("GET", "/", token=None)
         self.assertEqual(status, 200)
-        self.assertIn('src="/static/memory/memory.js"', page)
         self.assertIn("default-src 'self'", res.getheader("Content-Security-Policy"))
         self.assertEqual(res.getheader("Referrer-Policy"), "no-referrer")
-        status, js, res = self.request("GET", "/static/memory/memory.js", token=None)
+        scripts = re.findall(r'<script[^>]*src="([^"]+)"', page)
+        self.assertTrue(scripts and all(s.startswith("/static/plugin/assets/") for s in scripts), scripts)
+        self.assertNotIn("<script>", page)  # no inline code: the CSP would block it
+        status, js, res = self.request("GET", scripts[0], token=None)
         self.assertEqual(status, 200)
         self.assertIn("javascript", res.getheader("Content-Type"))
 
@@ -229,14 +232,15 @@ class TestDetach(unittest.TestCase):
         self.assertFalse(dashboard.state_path().exists())
 
 
-class TestPageScripts(unittest.TestCase):
-    def test_content_goes_through_fill(self):
-        # The browser's replaceChildren() renders an array as "[object ...]" and null as "null":
-        # page code uses claudysha.fill(), which flattens and skips them, instead.
-        for js in [claudysha.REPO / "plugin" / "web" / "app.js", *(claudysha.REPO).glob("*/web/*.js")]:
-            calls = [line for line in js.read_text().splitlines()
-                     if ".replaceChildren(" in line and "el.replaceChildren();" not in line]
-            self.assertEqual(calls, [], js)
+class TestBuiltPage(unittest.TestCase):
+    def test_built_page_is_committed_and_self_contained(self):
+        # Users need only Python: the page built from dashboard/ is in plugin/web/, and it loads
+        # nothing from outside (the CSP allows only the page's own files).
+        web = claudysha.REPO / "plugin" / "web"
+        page = (web / "index.html").read_text()
+        for ref in re.findall(r'(?:src|href)="([^"]+)"', page):
+            self.assertTrue(ref.startswith("/static/plugin/"), ref)
+            self.assertTrue((web / ref.removeprefix("/static/plugin/")).is_file(), ref)
 
 
 class TestArchivesFolder(unittest.TestCase):
