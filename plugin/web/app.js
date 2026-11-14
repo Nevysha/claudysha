@@ -47,12 +47,22 @@
       else if (k === "value") el.value = v;
       else el.setAttribute(k, v === true ? "" : v);
     }
-    const add = (c) => {
-      if (c === null || c === undefined || c === false) return;
-      if (Array.isArray(c)) c.forEach(add);
-      else el.append(c instanceof Node ? c : document.createTextNode(String(c)));
-    };
-    children.forEach(add);
+    addTo(el, children);
+    return el;
+  }
+
+  // Append children like h() does: arrays are flattened, null/undefined/false skipped.
+  function addTo(el, c) {
+    if (c === null || c === undefined || c === false) return;
+    if (Array.isArray(c)) c.forEach((x) => addTo(el, x));
+    else el.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+
+  // Replace an element's content. Use this, never the browser's replaceChildren/append directly:
+  // they turn an array into "[object ...]" text and null into "null".
+  function fill(el, ...children) {
+    el.replaceChildren();
+    addTo(el, children);
     return el;
   }
 
@@ -95,7 +105,7 @@
   async function renderNav() {
     const nav = document.getElementById("nav");
     const { id } = route();
-    nav.replaceChildren(...panels.map((p) => {
+    fill(nav, ...panels.map((p) => {
       const badge = h("span", { class: "badge hidden" });
       if (p.badge) p.badge().then((n) => { if (n) { badge.textContent = n; badge.classList.remove("hidden"); } }).catch(() => {});
       return h("a", { class: "nav-item" + (p.id === id ? " active" : ""), href: `#/${p.id}` },
@@ -110,10 +120,10 @@
     const p = panels.find((x) => x.id === id) || panels[0];
     renderNav();
     const el = main();
-    el.replaceChildren();
+    fill(el);
     window.scrollTo(0, 0);
     try { cleanup = await p.render(el, arg); } catch (e) {
-      el.replaceChildren(h("div", { class: "empty" }, h("span", { class: "big" }, "⚠️"), e.message));
+      fill(el, h("div", { class: "empty" }, h("span", { class: "big" }, "⚠️"), e.message));
     }
   }
 
@@ -121,7 +131,7 @@
     if (location.hash === hash) render(); else location.hash = hash;
   }
 
-  window.claudysha = { panel, api, h, toast, act, date, datetime, size, copy, go, refreshNav: renderNav };
+  window.claudysha = { panel, api, h, fill, toast, act, date, datetime, size, copy, go, refreshNav: renderNav };
 
   // ---------------------------------------------------------------- the plugin's overview
   panel({
@@ -150,7 +160,7 @@
       const archiveList = h("div");
       const preview = h("div");
       const showArchives = (list) => {
-        archiveList.replaceChildren(list.length ? h("table", { class: "list" },
+        fill(archiveList, list.length ? h("table", { class: "list" },
           h("tr", {}, h("th", {}, "Archive"), h("th", {}, "Kind"), h("th", {}, "Date"), h("th", {}, "Size"), h("th", {})),
           list.map((a) => h("tr", {},
             h("td", { class: "mono" }, a.name), h("td", {}, h("span", { class: "pill" + (a.kind === "archive" ? "" : " warn") }, a.kind)),
@@ -160,7 +170,7 @@
       };
       const showPreview = (btn, name) => act(btn, async () => {
         const p = await api(`/api/plugin/load-preview?name=${encodeURIComponent(name)}`);
-        preview.replaceChildren(h("div", { class: "card card-body" },
+        fill(preview, h("div", { class: "card card-body" },
           h("h2", {}, `Restore ${p.archive.name}`),
           h("p", {}, `Made ${datetime(p.created)}, ${p.files} files. Restoring replaces all of claudysha's data with it`,
             p.erased.length ? `, and erases ${p.erased.length} current file(s) that aren't in it:` : "."),
@@ -203,12 +213,12 @@
       let loaded = false;
 
       async function load() {
-        body.replaceChildren(h("p", { class: "muted" }, "Running the session start…"));
+        fill(body, h("p", { class: "muted" }, "Running the session start…"));
         const p = await act(null, () => api(`/api/plugin/session-preview?scope=${encodeURIComponent(picker.value)}`));
-        if (!p) { body.replaceChildren(); return; }
+        if (!p) { fill(body); return; }
         if (!loaded) {
-          picker.replaceChildren(h("option", { value: "" }, "A new folder (fresh session)"),
-            p.scopes.map((s) => h("option", { value: s.scope }, `${s.scope} (${s.count})`)));
+          fill(picker, h("option", { value: "" }, "A new folder (fresh session)"),
+            p.scopes.filter((s) => s.scope !== "global").map((s) => h("option", { value: s.scope }, `${s.scope} (${s.count})`)));
           loaded = true;
         }
         const max = Math.max(1, ...p.sections.map((s) => s.tokens));
@@ -218,7 +228,7 @@
           h("td", { class: "num" }, s.tokens ? `≈ ${s.tokens.toLocaleString()}` : h("span", { class: "muted" }, "nothing")),
           h("td", { class: "num muted" }, p.total ? `${Math.round((100 * s.tokens) / p.total)}%` : "")));
 
-        body.replaceChildren(
+        fill(body, 
           h("div", { class: "grid-cards" },
             h("div", { class: "card stat accent" }, h("div", { class: "label" }, "Added to every session start"),
               h("div", { class: "value" }, `≈ ${p.total.toLocaleString()}`), h("div", { class: "hint" }, "tokens, estimated")),
@@ -255,7 +265,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     panels.sort((a, b) => a.order - b.order);
     if (!readToken()) {
-      main().replaceChildren(h("div", { class: "empty" }, h("span", { class: "big" }, "🔒"),
+      fill(main(), h("div", { class: "empty" }, h("span", { class: "big" }, "🔒"),
         "Open the link that claudysha dashboard printed in your terminal: it carries the key to this page."));
       return;
     }

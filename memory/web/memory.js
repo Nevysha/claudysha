@@ -1,7 +1,7 @@
 // Memory module: the review queue and the memory browser (routes in memory/panel.py).
 "use strict";
 (() => {
-  const { panel, api, h, toast, act, date, datetime, refreshNav } = window.claudysha;
+  const { panel, api, h, fill, toast, act, date, datetime, refreshNav } = window.claudysha;
   let summaryCache = null;
 
   async function summary(fresh) {
@@ -83,7 +83,7 @@
         bulkReject.textContent = `Reject ${n || ""}`.trim();
         bulkApprove.disabled = bulkReject.disabled = !n;
         selectAll.checked = n > 0 && n === items.length;
-        head.replaceChildren(
+        fill(head, 
           h("div", {}, h("h1", {}, "Review"),
             h("p", {}, items.length
               ? `${items.length} proposed memor${items.length === 1 ? "y" : "ies"} about how Claude should work with you. Nothing here is used until you approve it.`
@@ -107,7 +107,7 @@
 
       function card(m) {
         const box = h("div", { class: "card mem" + (selected.has(m.id) ? " selected" : ""), "data-id": m.id });
-        const fill = (editing) => {
+        const paint = (editing) => {
           const check = h("input", { type: "checkbox", checked: selected.has(m.id), onchange: () => {
             check.checked ? selected.add(m.id) : selected.delete(m.id);
             box.classList.toggle("selected", check.checked);
@@ -115,32 +115,32 @@
           } });
           const approve = h("button", { class: "ok small", onclick: () => act(approve, async () => { await setStatus([m.id], "active"); toast(`#${m.id} approved`); leave([m.id]); }) }, "✓ Approve");
           const reject = h("button", { class: "bad small", onclick: () => act(reject, async () => { await setStatus([m.id], "rejected"); toast(`#${m.id} rejected`); leave([m.id]); }) }, "✗ Reject");
-          box.replaceChildren(
+          fill(box, 
             h("div", { class: "mem-head" }, check, h("span", { class: "id" }, `#${m.id}`), typePill(m.type), scopePill(m.scope),
               h("span", {}, date(m.created_at)), h("span", { title: "confidence" }, `c${m.confidence.toFixed(1)}`)),
             editing
-              ? editForm(m, s, (updated) => { Object.assign(m, updated); fill(false); }, () => fill(false))
+              ? editForm(m, s, (updated) => { Object.assign(m, updated); paint(false); }, () => paint(false))
               : h("div", { class: "mem-text" }, m.text),
             editing ? null : h("div", { class: "mem-foot" }, approve, reject,
-              h("button", { class: "small ghost", onclick: () => fill(true) }, "✎ Edit"),
+              h("button", { class: "small ghost", onclick: () => paint(true) }, "✎ Edit"),
               h("span", { class: "spacer" }), h("span", { class: "mem-source" }, `from ${m.source_label}`)),
             m.related.length && !editing ? h("div", { class: "related" }, h("div", { class: "related-title" }, "Looks related"),
               m.related.map((r) => h("div", { class: "related-item" },
                 h("a", { class: "id", href: `#/memories/${r.id}` }, `#${r.id}`), statusPill(r.status), h("span", {}, r.text)))) : null);
         };
-        fill(false);
+        paint(false);
         return box;
       }
 
       function draw() {
         drawHead();
         if (!items.length) {
-          body.replaceChildren(h("div", { class: "card empty" }, h("span", { class: "big" }, "🎉"), "Nothing to review."));
+          fill(body, h("div", { class: "card empty" }, h("span", { class: "big" }, "🎉"), "Nothing to review."));
           return;
         }
         const groups = new Map();
         items.forEach((m) => { if (!groups.has(m.scope)) groups.set(m.scope, []); groups.get(m.scope).push(m); });
-        body.replaceChildren(...[...groups].map(([scope, ms]) => h("section", { class: "scope-group" },
+        fill(body, ...[...groups].map(([scope, ms]) => h("section", { class: "scope-group" },
           h("h2", {}, scopePill(scope), h("span", { class: "muted small" },
             scope === s.global ? "applies to every session" : "applies to sessions in this scope")),
           h("div", { class: "mem-list" }, ms.map(card)))));
@@ -195,7 +195,7 @@
         let table = listBox.querySelector("tbody");
         if (!more || !table) {
           table = h("tbody");
-          listBox.replaceChildren(
+          fill(listBox, 
             h("p", { class: "muted small" }, r.total ? `${r.total} memor${r.total === 1 ? "y" : "ies"}${r.ranked ? ", best matches first" : ", newest first"}` : ""),
             r.total ? h("div", { class: "card" }, h("table", { class: "list" }, table)) : h("div", { class: "card empty" }, h("span", { class: "big" }, "🫥"), "No memory matches."));
         }
@@ -264,7 +264,7 @@
           main = h("div", { class: "mem-text" }, m.text);
         }
 
-        detail.replaceChildren(h("div", { class: "card-body" },
+        fill(detail, h("div", { class: "card-body" },
           h("div", { class: "mem-head" }, h("span", { class: "id" }, `#${m.id}`), typePill(m.type), statusPill(m.status),
             h("span", { class: "spacer" }), h("button", { class: "small ghost", title: "Close", onclick: close }, "✕")),
           main,

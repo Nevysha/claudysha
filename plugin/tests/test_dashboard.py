@@ -211,6 +211,16 @@ class TestDetach(unittest.TestCase):
         self.assertFalse(dashboard.state_path().exists())
 
 
+class TestPageScripts(unittest.TestCase):
+    def test_content_goes_through_fill(self):
+        # The browser's replaceChildren() renders an array as "[object ...]" and null as "null":
+        # page code uses claudysha.fill(), which flattens and skips them, instead.
+        for js in [claudysha.REPO / "plugin" / "web" / "app.js", *(claudysha.REPO).glob("*/web/*.js")]:
+            calls = [line for line in js.read_text().splitlines()
+                     if ".replaceChildren(" in line and "el.replaceChildren();" not in line]
+            self.assertEqual(calls, [], js)
+
+
 class TestArchivesFolder(unittest.TestCase):
     def test_archives_folder_is_not_data(self):
         # An old layout's migration must not move the dashboard's archives into data/.
