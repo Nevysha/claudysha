@@ -3,8 +3,13 @@
 
 - settings: ~/.config/claudysha/claudysha.conf (see claudysha.conf.example): the data
   folder path and who the user is;
-- the data folder (~/.claudysha by default; CLAUDYSHA_HOME overrides it), where every
-  module keeps its data, and a lock modules take while writing;
+- the plugin's folder (~/.claudysha by default; CLAUDYSHA_HOME overrides it):
+    bin/    the claudysha and mem commands (links to the repo), for the user's PATH
+    state/  runtime state (the guard pause)
+    data/   the user's data: every module keeps its part here; archived, restored by load,
+            and guarded. Older versions kept it directly in the plugin's folder: init()
+            moves it into data/ (see migrate());
+  and a lock modules take while writing;
 - the scope of a session: which repository (or folder) it works in;
 - setup and init (each module in MODULES creates its own part of the data folder);
 - archive and load of the whole data folder;
@@ -95,18 +100,47 @@ def user_pronouns():
 
 
 def home():
+    """The plugin's folder (bin/, state/, data/)."""
     raw = os.environ.get("CLAUDYSHA_HOME") or setting("home")
     return Path(os.path.expandvars(raw)).expanduser()
 
 
+PLUGIN_ENTRIES = {"bin", "state", "data"}   # what the plugin's folder holds besides old-layout leftovers
+LEGACY_LINKS = ("brain", "memory")          # links left after migrate() for sessions running older code
+
+
+def legacy_layout():
+    """True while the data still sits directly in the plugin's folder (before migrate())."""
+    h = home()
+    return not (h / "data").exists() and any(
+        (h / name).is_dir() and not (h / name).is_symlink() for name in LEGACY_LINKS)
+
+
+def data_dir():
+    """The user's data: what modules write, archive saves and load replaces."""
+    return home() if legacy_layout() else home() / "data"
+
+
+def bin_dir():
+    return home() / "bin"
+
+
+def state_dir():
+    return home() / "state"
+
+
 @contextlib.contextmanager
-def home_lock(exclusive=False):
-    """Shared for normal writers (extraction), exclusive for `load`."""
+def home_lock(exclusive=False, wait=True):
+    """Shared for normal writers (extraction), exclusive for `load` and migrate().
+
+    With wait=False, raises BlockingIOError instead of waiting when the lock is taken.
+    (Next to the folder, where older versions take it too.)
+    """
     h = home()
     h.parent.mkdir(parents=True, exist_ok=True)
     lock_path = h.parent / f".{h.name.lstrip('.')}.lock"
     with open(lock_path, "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+        fcntl.flock(f, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | (0 if wait else fcntl.LOCK_NB))
         try:
             yield
         finally:
@@ -166,7 +200,7 @@ def load_module(name):
 # ---------------------------------------------------------------- setup and init
 
 SETUP_QUESTIONS = [
-    ("home", "Where should claudysha keep its data (notes, memory database, backups)?", DEFAULT_HOME),
+    ("home", "Where should claudysha keep its folder (your data, its commands)?", DEFAULT_HOME),
     ("user_name", "What name should Claude use for you?", None),
     ("user_pronouns", "Your pronouns (used in the memory prompts)?", "they/them"),
 ]
@@ -178,7 +212,7 @@ def render_config(values):
     return (
         "# claudysha settings. Lines are `key = value`; `#` starts a comment.\n"
         "# Written by install.sh; edit freely. Reference: claudysha.conf.example in the plugin.\n\n"
-        "# The data folder, where every module keeps its data (see the README).\n"
+        "# The plugin's folder: its commands (bin/) and your data (data/), see the README.\n"
         f"home = {v['home']}\n\n"
         "# Who Claude works with. Used by the modules (prompts, session notes).\n"
         f"user_name = {v['user_name']}\n"
@@ -213,10 +247,46 @@ def ensure_config(ask=None, out=print):
     return True
 
 
-def init():
-    """Create the data folder and let every module create its part. Never overwrites files."""
+def migrate(wait=True):
+    """Move an old layout's data (directly in the plugin's folder) into data/.
+
+    Under the exclusive lock, so no extraction writes meanwhile; with wait=False (session start)
+    it gives up when the lock is taken, and the data stays usable where it is (data_dir() follows
+    it) until a later try. Leaves links brain -> data/brain and memory -> data/memory for
+    sessions still running older code. Returns True if it moved something.
+    """
+    if not legacy_layout():
+        return False
+    h = home()
+    try:
+        with home_lock(exclusive=True, wait=wait):
+            if not legacy_layout():
+                return False
+            staging = h / ".data-migrating"
+            staging.mkdir(exist_ok=True)
+            for entry in sorted(h.iterdir()):
+                if entry.name not in PLUGIN_ENTRIES and entry != staging and not entry.name.startswith(".data-"):
+                    entry.rename(staging / entry.name)
+            staging.rename(h / "data")
+            for name in LEGACY_LINKS:
+                if (h / "data" / name).exists() and not (h / name).exists():
+                    (h / name).symlink_to(Path("data") / name)
+    except BlockingIOError:
+        return False
+    old_pause = h.parent / f".{h.name.lstrip('.')}.guard-paused-until"
+    old_pause.unlink(missing_ok=True)
+    return True
+
+
+def init(wait=True):
+    """Create the plugin's folder and the data folder, and let every module create its part.
+
+    Never overwrites files. Migrates an old layout first (see migrate()).
+    """
     h = home()
     h.mkdir(parents=True, exist_ok=True)
+    migrate(wait=wait)
+    data_dir().mkdir(parents=True, exist_ok=True)
     for name in MODULES:
         load_module(name).init()
     return h
@@ -239,9 +309,8 @@ def dev_mode():
 
 
 def guard_pause_path():
-    """Outside the data folder (not archived). Writing it by hand does nothing without dev mode."""
-    h = home()
-    return h.parent / f".{h.name.lstrip('.')}.guard-paused-until"
+    """In state/ (not archived). Writing it by hand does nothing without dev mode."""
+    return state_dir() / "guard-paused-until"
 
 
 def guard_paused_until():
@@ -260,6 +329,7 @@ def pause_guard(minutes):
         raise SystemExit("The guard can only be paused in dev mode, which only the user can turn on "
                          "(`claudysha dev on`, in their own terminal).")
     until = dt.datetime.now() + dt.timedelta(minutes=minutes)
+    guard_pause_path().parent.mkdir(parents=True, exist_ok=True)
     guard_pause_path().write_text(until.isoformat(timespec="seconds"))
     return until
 
@@ -270,11 +340,12 @@ def resume_guard():
 
 
 def guarded_paths():
-    """The data folder, and the settings file once it exists (install may still create it)."""
-    paths = [home()]
+    """(guarded, open): the plugin's folder but its bin/ and state/, and the settings file
+    once it exists (install may still create it)."""
+    guarded = [home()]
     if config_path().exists():
-        paths.append(config_path())
-    return paths
+        guarded.append(config_path())
+    return guarded, [bin_dir(), state_dir()]
 
 
 def _inside(path, roots):
@@ -295,17 +366,30 @@ def _spellings(path):
     return out
 
 
+BOUNDARY = r"(?=$|[/\s\"'`;|&)<>])"
+
+
+def _bash_touches(cmd, guarded, open_):
+    """Does the command text name a guarded path (not one of the open ones inside it)?"""
+    for root in guarded:
+        for spelling in _spellings(root):
+            for m in re.finditer(re.escape(spelling) + BOUNDARY, cmd):
+                rest = cmd[m.end():]
+                if not any(re.match(re.escape("/" + o.name) + BOUNDARY, rest)
+                           for o in open_ if o.parent == root):
+                    return True
+    return False
+
+
 def guard_denies(event):
     """True if this PreToolUse event (the hook JSON) touches a guarded path."""
     if guard_paused_until():
         return False
     tool, args = event.get("tool_name", ""), event.get("tool_input") or {}
     cwd = Path(event.get("cwd") or os.getcwd())
-    roots = guarded_paths()
+    guarded, open_ = guarded_paths()
     if tool == "Bash":
-        cmd = str(args.get("command", ""))
-        return any(re.search(re.escape(s) + r"(?=$|[/\s\"'`;|&)<>])", cmd)
-                   for root in roots for s in _spellings(root))
+        return _bash_touches(str(args.get("command", "")), guarded, open_)
     keys = GUARDED_TOOLS.get(tool)
     if not keys:
         return False
@@ -318,10 +402,11 @@ def guard_denies(event):
             raw = re.split(r"[*?\[{]", raw, maxsplit=1)[0] or "."
         path = Path(os.path.expandvars(raw)).expanduser()
         path = Path(os.path.normpath(path if path.is_absolute() else cwd / path))
-        if _inside(path, roots):
+        if _inside(path, guarded) and not _inside(path, open_):
             return True
     # Grep or Glob without a path search the session's folder.
-    return tool in ("Grep", "Glob") and not args.get("path") and _inside(cwd, roots)
+    return (tool in ("Grep", "Glob") and not args.get("path")
+            and _inside(cwd, guarded) and not _inside(cwd, open_))
 
 
 def guard_hook(stdin_text):
@@ -375,7 +460,7 @@ def dev_session_text():
     state = f"paused until {paused:%H:%M}" if paused else "on"
     return (f"[claudysha] Dev mode is on: {user_name()} works on claudysha itself. The guard is {state}. "
             f"Dev commands: `{c} guard off [--minutes N]` pauses the guard (default {GUARD_PAUSE_MINUTES} min) "
-            f"so you can open claudysha's data folder (`{c} home`) and settings file; `{c} guard on` turns it "
+            f"so you can open claudysha's data folder (`{c} config` shows where) and settings file; `{c} guard on` turns it "
             "back on. Pause it only when the work needs it, say so, and turn it back on when done. "
             "Never turn dev mode on or off yourself.")
 
@@ -383,10 +468,10 @@ def dev_session_text():
 # ---------------------------------------------------------------- archive
 
 def archive(dest=None):
-    """Write a .tar.gz of the whole home. Returns its path."""
-    h = home()
+    """Write a .tar.gz of the data folder. Returns its path."""
+    h = data_dir()
     if not h.is_dir():
-        raise SystemExit(f"no claudysha home at {h}")
+        raise SystemExit(f"no claudysha data at {h}")
     stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     dest = Path(dest).expanduser() if dest else Path.cwd() / f"claudysha-{stamp}.tar.gz"
     if dest.is_dir():
@@ -399,7 +484,9 @@ def archive(dest=None):
             tar.add(Path(tmp, MANIFEST), arcname=MANIFEST)
             for path in sorted(h.rglob("*")):
                 rel = path.relative_to(h)
-                if path.is_dir() or path.name.endswith((".db-wal", ".db-shm")) or path.name.startswith(".ingest-"):
+                if h == home() and rel.parts[0] in PLUGIN_ENTRIES:
+                    continue  # old layout: the data is home itself, minus the plugin's folders
+                if path.is_symlink() or path.is_dir() or path.name.endswith((".db-wal", ".db-shm")) or path.name.startswith(".ingest-"):
                     continue
                 if path.suffix == ".db":
                     # A consistent copy even while extraction writes to it.
@@ -443,7 +530,7 @@ def read_archive(path):
 def plan_load(path):
     """What loading would do: (manifest, files in archive, current files that would be erased)."""
     manifest, names = read_archive(path)
-    h = home()
+    h = data_dir()
     current = set()
     if h.is_dir():
         current = {str(p.relative_to(h)) for p in h.rglob("*")
@@ -458,11 +545,12 @@ def load(path, confirm, out=print):
     The current home is archived next to it first.
     """
     path = Path(path).expanduser()
+    migrate()  # an old layout first, so the load replaces data/ only
     manifest, names, erased = plan_load(path)
-    h = home()
+    h = data_dir()
     out(f"Archive: {path} (created {manifest.get('created')}, {len(names)} files)")
-    out(f"Home:    {h}")
-    out(f"Loading REPLACES the whole home with the archive. {len(erased)} current file(s) are not in it"
+    out(f"Data:    {h}")
+    out(f"Loading REPLACES all of claudysha's data with the archive. {len(erased)} current file(s) are not in it"
         " and will be erased" + (":" if erased else "."))
     for name in erased[:30]:
         out(f"  - {name}")
@@ -518,7 +606,7 @@ def tty_input(prompt):
 def main():
     p = argparse.ArgumentParser(prog="claudysha", description="claudysha plugin home: paths, archive, load.")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("home", help="print the home folder path")
+    sub.add_parser("home", help="print the plugin's folder (bin/, state/, data/)")
     sub.add_parser("config", help="print the config file path and the settings in effect")
     sub.add_parser("init", help="create the home folder layout (keeps existing files)")
     sub.add_parser("setup", help="write the config if missing (asks questions in a terminal), then init")
@@ -538,6 +626,8 @@ def main():
         print(home())
     elif a.cmd == "config":
         print(f"config: {config_path()}" + ("" if config_path().exists() else " (missing: defaults)"))
+        print(f"data:   {data_dir()}")
+        print(f"bin:    {bin_dir()}")
         for key in DEFAULTS:
             print(f"  {key} = {home() if key == 'home' else setting(key)}")
     elif a.cmd == "init":
@@ -573,7 +663,7 @@ def main():
         with contextlib.suppress(Exception):
             if not sys.stdin.isatty():
                 sys.stdin.read()
-        init()  # a plugin installed from GitHub has no install.sh run: create the data folder here
+        init(wait=False)  # a plugin installed from GitHub has no install.sh run: create the folders here
         if dev_mode():
             print(dev_session_text())
         if not config_path().exists():

@@ -3,65 +3,77 @@
 # Safe to run again: it skips the steps that are already done.
 #   ./install.sh            install (settings: ~/.config/claudysha/claudysha.conf, created from claudysha.conf.example)
 #   ./install.sh --dev      install, then turn dev mode on (asks you to confirm, see the README)
-#   ./install.sh --path     install, and link `claudysha` and `mem` into ~/.local/bin without asking
-#   ./install.sh --remove   uninstall (keeps the home folder, removes those links)
-# In a terminal, it asks whether to add `claudysha` and `mem` to your PATH (links in ~/.local/bin).
+#   ./install.sh --path     install, and add the commands' folder to your PATH without asking
+#   ./install.sh --remove   uninstall (keeps your data, removes the commands and the PATH line)
+# The `claudysha` and `mem` commands are linked into the plugin's bin/ folder (~/.claudysha/bin);
+# in a terminal, it offers to put that folder on your PATH.
 set -euo pipefail
 user_path="$PATH"                       # the PATH as the user had it, before the line below
 export PATH="$HOME/.local/bin:$PATH"   # claude's native install, also when run from Ansible
 dir="$(cd "$(dirname "$0")" && pwd)"
 plugin="claudysha@nevysha"
-bindir="$HOME/.local/bin"
 commands=(claudysha mem)
+linked_new=no
 marker="# added by claudysha install.sh"
-path_line="export PATH=\"\$HOME/.local/bin:\$PATH\"  $marker"
 case "$(basename "${SHELL:-}")" in
     zsh) rcfile="$HOME/.zshrc"; startup=("$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.zshrc") ;;
     bash) rcfile="$HOME/.bashrc"; startup=("$HOME/.bash_profile" "$HOME/.profile" "$HOME/.bashrc") ;;
     *) rcfile=""; startup=() ;;
 esac
 
-# Our link in ~/.local/bin, or nothing: never touch a file we didn't put there.
-ours() { [ -L "$bindir/$1" ] && [ "$(readlink -f "$bindir/$1")" = "$(readlink -f "$dir/$1")" ]; }
+set_bindir() {
+    bindir="$("$dir/claudysha" home)/bin"
+    case "$bindir" in
+        "$HOME"/*) bindir_shell="\$HOME/${bindir#"$HOME"/}" ;;   # as written in a startup file
+        *) bindir_shell="$bindir" ;;
+    esac
+    path_export="export PATH=\"$bindir_shell:\$PATH\""
+}
+
+# Our link, or nothing: never touch a file we didn't put there.
+ours() { [ -L "$1/$2" ] && [ "$(readlink -f "$1/$2")" = "$(readlink -f "$dir/$2")" ]; }
 
 link_commands() {
     mkdir -p "$bindir"
     for c in "${commands[@]}"; do
-        if ours "$c"; then continue; fi
-        if [ -e "$bindir/$c" ] && [ ! -L "$bindir/$c" ]; then
-            echo "skipped $bindir/$c: a file of that name is already there" >&2; continue
-        fi
-        ln -sfn "$dir/$c" "$bindir/$c"   # a link to another clone is replaced by this one
-        echo "linked $bindir/$c"
+        ours "$bindir" "$c" || { ln -sfn "$dir/$c" "$bindir/$c"; echo "linked $bindir/$c"; linked_new=yes; }
     done
-    ensure_bindir_on_path
+    # Older versions linked them into ~/.local/bin: remove those links.
+    for c in "${commands[@]}"; do
+        if ours "$HOME/.local/bin" "$c"; then rm "$HOME/.local/bin/$c"; echo "removed the old link $HOME/.local/bin/$c"; fi
+    done
 }
 
-# ~/.local/bin is on the PATH of most setups, not all: check the user's own PATH (not ours,
-# which has it), then the startup file of their shell, and only edit that file if they agree.
-ensure_bindir_on_path() {
-    case ":$user_path:" in *":$bindir:"*) return ;; esac
-    if [ -n "$rcfile" ] && grep -qs '\.local/bin' "${startup[@]}"; then
-        echo "note: open a new terminal to use the commands (your startup files add $bindir to the PATH)"
-        return
+# The bin folder on the user's PATH: check their own PATH (not ours), then their shell's
+# startup files; edit their startup file only with --path or their OK in a terminal.
+ensure_on_path() {
+    case ":$user_path:" in *":$bindir:"*) return 0 ;; esac
+    if [ -n "$rcfile" ] && grep -qsF -e "$bindir" -e "$bindir_shell" "${startup[@]}"; then
+        if [ "$linked_new" = yes ]; then echo "note: open a new terminal to use the claudysha and mem commands"; fi
+        return 0
     fi
-    if [ -n "$rcfile" ] && [ -t 0 ]; then
-        read -r -p "$bindir is not on your PATH. Add it in $rcfile? [Y/n] " answer
-        if [[ "${answer:-y}" == [Yy]* ]]; then
-            printf '\n%s\n' "$path_line" >> "$rcfile"
-            echo "added to $rcfile: open a new terminal to use the commands"
-            return
-        fi
+    local add=no
+    if [ -n "$rcfile" ] && [[ " $* " == *" --path "* ]]; then
+        add=yes
+    elif [ -n "$rcfile" ] && [ -t 0 ]; then
+        read -r -p "Put the claudysha and mem commands on your PATH (adds one line to $rcfile)? [Y/n] " answer
+        [[ "${answer:-y}" == [Yy]* ]] && add=yes
     fi
-    echo "note: $bindir is not on your PATH. Add this line to your shell's startup file${rcfile:+ ($rcfile)}:"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    if [ "$add" = yes ]; then
+        printf '\n%s  %s\n' "$path_export" "$marker" >> "$rcfile"
+        echo "added to $rcfile: open a new terminal to use the claudysha and mem commands"
+    else
+        echo "note: to use the claudysha and mem commands, add this line to your shell's startup file${rcfile:+ ($rcfile)}:"
+        echo "  $path_export"
+    fi
 }
 
 if [ "${1:-}" = "--remove" ]; then
     claude plugin uninstall "$plugin" --keep-data 2>/dev/null || true
     claude plugin marketplace remove nevysha 2>/dev/null || true
+    set_bindir
     for c in "${commands[@]}"; do
-        if ours "$c"; then rm "$bindir/$c"; echo "removed $bindir/$c"; fi
+        if ours "$bindir" "$c"; then rm "$bindir/$c"; echo "removed $bindir/$c"; fi
     done
     for f in "$HOME/.zshrc" "$HOME/.bashrc"; do
         if grep -qsF "$marker" "$f"; then
@@ -69,7 +81,7 @@ if [ "${1:-}" = "--remove" ]; then
             echo "removed the PATH line from $f"
         fi
     done
-    echo "claudysha removed (its home folder is kept: $("$dir/claudysha" home))"
+    echo "claudysha removed (your data is kept: $("$dir/claudysha" home)/data)"
     exit 0
 fi
 
@@ -78,18 +90,12 @@ python3 -c 'import sqlite3; sqlite3.connect(":memory:").execute("create virtual 
     || { echo "python3 with SQLite FTS5 is required" >&2; exit 1; }
 
 # Writes ~/.config/claudysha/claudysha.conf if missing (asks questions in a terminal, defaults
-# otherwise), then creates the home folder.
+# otherwise), then creates the plugin's folder (and moves an older layout's data into data/).
 "$dir/claudysha" setup
 
-# Commands on the PATH: --path says yes; otherwise ask, in a terminal only, when a link is missing.
-missing=no
-for c in "${commands[@]}"; do ours "$c" || missing=yes; done
-if [[ " $* " == *" --path "* ]]; then
-    link_commands
-elif [ "$missing" = yes ] && [ -t 0 ]; then
-    read -r -p "Add the claudysha and mem commands to your PATH (links in $bindir)? [Y/n] " answer
-    case "${answer:-y}" in [Yy]*) link_commands ;; *) echo "skipped: run them as $dir/claudysha and $dir/mem" ;; esac
-fi
+set_bindir
+link_commands
+ensure_on_path "$@"
 if [[ " $* " == *" --dev "* ]]; then
     "$dir/claudysha" dev on || true   # not confirmed: install anyway, dev mode stays off
 fi

@@ -72,7 +72,7 @@ class BacklogCommandsTest(unittest.TestCase):
                                            "CLAUDYSHA_CONFIG": str(Path(self.tmp.name) / "c.conf")})
         env.start()
         self.addCleanup(env.stop)
-        self.brain = self.home / "brain"
+        self.brain = self.home / "data/brain"
         (self.brain / "maybe-later").mkdir(parents=True)
         subprocess.run(["git", "init", "-q", str(self.brain)], check=True)
         for k, v in (("user.email", "t@example.com"), ("user.name", "Test")):

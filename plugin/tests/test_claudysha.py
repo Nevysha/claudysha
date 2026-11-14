@@ -26,9 +26,10 @@ class HomeTest(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         self.out = []
+        self.data = self.home / "data"
 
     def write(self, rel, text):
-        p = self.home / rel
+        p = self.data / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
         return p
@@ -131,13 +132,13 @@ class TestSetup(HomeTest):
 class TestInit(HomeTest):
     def test_creates_data_folder_and_module_parts(self):
         self.assertEqual(claudysha.init(), self.home)
-        self.assertTrue((self.home / "brain/core.md").exists())  # created by the memory module
+        self.assertTrue((self.data / "brain/core.md").exists())  # created by the memory module
         self.assertEqual(set(claudysha.MODULES), {"memory"})
 
 
 class TestArchiveLoad(HomeTest):
     def make_db(self, value):
-        path = self.home / "memory/memory.db"
+        path = self.data / "memory/memory.db"
         path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(path)
         db.execute("PRAGMA journal_mode=WAL")
@@ -160,9 +161,9 @@ class TestArchiveLoad(HomeTest):
         self.write("brain/memories/new.md", "added after the archive")
         safety = claudysha.load(arc, confirm=lambda prompt: "erase", out=self.out.append)
 
-        self.assertEqual((self.home / "brain/core.md").read_text(), "v1")
-        self.assertFalse((self.home / "brain/memories/new.md").exists())
-        rows = sqlite3.connect(self.home / "memory/memory.db").execute("SELECT v FROM t").fetchall()
+        self.assertEqual((self.data / "brain/core.md").read_text(), "v1")
+        self.assertFalse((self.data / "brain/memories/new.md").exists())
+        rows = sqlite3.connect(self.data / "memory/memory.db").execute("SELECT v FROM t").fetchall()
         self.assertEqual(rows, [("from-archive",)])  # WAL content made it into the archive
         self.assertTrue(any("brain/memories/new.md" in line for line in self.out))
         with tarfile.open(safety) as tar:
@@ -174,15 +175,15 @@ class TestArchiveLoad(HomeTest):
         self.write("brain/core.md", "v2")
         for answer in ("", "yes", "ERASE", "erase please"):
             self.assertIsNone(claudysha.load(arc, confirm=lambda prompt: answer, out=self.out.append))
-        self.assertEqual((self.home / "brain/core.md").read_text(), "v2")
+        self.assertEqual((self.data / "brain/core.md").read_text(), "v2")
         self.assertIn("Cancelled, nothing changed.", self.out)
 
     def test_load_into_missing_home(self):
         self.write("brain/core.md", "v1")
         arc = claudysha.archive(self.tmp / "a.tar.gz")
-        __import__("shutil").rmtree(self.home)
+        __import__("shutil").rmtree(self.data)
         self.assertIsNone(claudysha.load(arc, confirm=lambda p: "erase", out=self.out.append))
-        self.assertEqual((self.home / "brain/core.md").read_text(), "v1")
+        self.assertEqual((self.data / "brain/core.md").read_text(), "v1")
 
     def test_rejects_unsafe_or_foreign_archives(self):
         bad = self.tmp / "bad.tar.gz"
@@ -206,6 +207,57 @@ class TestArchiveLoad(HomeTest):
         with mock.patch.object(sys, "stdin", io.StringIO("erase\n")):
             with self.assertRaises(SystemExit):
                 claudysha.tty_confirm("? ")
+
+
+class TestLayout(HomeTest):
+    def old_home(self):
+        """A data folder as older versions laid it out: the data directly in the plugin's folder."""
+        for rel, text in (("brain/core.md", "mine"), ("memory/memory.db", ""), ("notes.txt", "x")):
+            p = self.home / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+
+    def test_new_layout(self):
+        claudysha.init()
+        self.assertEqual(claudysha.data_dir(), self.data)
+        self.assertTrue((self.data / "brain/core.md").exists())
+        self.assertEqual(claudysha.bin_dir(), self.home / "bin")
+
+    def test_migrates_an_old_layout_and_leaves_links(self):
+        self.old_home()
+        self.assertEqual(claudysha.data_dir(), self.home)  # usable where it is until migrated
+        claudysha.init()
+        self.assertEqual(claudysha.data_dir(), self.data)
+        self.assertEqual((self.data / "brain/core.md").read_text(), "mine")
+        self.assertTrue((self.data / "notes.txt").exists())
+        self.assertTrue((self.home / "brain").is_symlink())
+        self.assertEqual((self.home / "brain/core.md").read_text(), "mine")  # older code still works
+        self.assertFalse(claudysha.migrate())  # done once
+        arc = claudysha.archive(self.tmp / "a.tar.gz")
+        with tarfile.open(arc) as tar:
+            names = tar.getnames()
+        self.assertIn("brain/core.md", names)
+        self.assertFalse(any(n.startswith(("data/", "bin", "state")) for n in names))
+
+    def test_migration_waits_for_writers_or_gives_up_at_session_start(self):
+        self.old_home()
+        with claudysha.home_lock():  # an extraction is writing
+            self.assertFalse(claudysha.migrate(wait=False))
+            claudysha.init(wait=False)
+        self.assertEqual(claudysha.data_dir(), self.home)
+        self.assertFalse((self.home / "data").exists())
+        self.assertTrue(claudysha.migrate())
+
+    def test_archive_from_old_layout_skips_plugin_folders(self):
+        self.old_home()
+        (self.home / "bin").mkdir()
+        (self.home / "bin/mem").symlink_to(self.tmp)
+        arc = claudysha.archive(self.tmp / "a.tar.gz")
+        with tarfile.open(arc) as tar:
+            names = tar.getnames()
+        self.assertIn("brain/core.md", names)
+        self.assertFalse(any(n.startswith("bin") for n in names))
+        claudysha.read_archive(arc)  # loadable: no links inside
 
 
 class TestGuard(HomeTest):
@@ -234,6 +286,9 @@ class TestGuard(HomeTest):
         self.assertFalse(self.denies("Read", file_path=str(self.tmp / "home2/x")))
         self.assertFalse(self.denies("Grep", pattern="x", cwd=self.tmp))
         self.assertFalse(self.denies("WebFetch", url=str(self.home)))
+        self.assertFalse(self.denies("Read", file_path=str(self.home / "bin/mem")))
+        self.assertTrue(self.denies("Read", file_path=str(self.home / "binary")))
+        self.assertTrue(self.denies("Read", file_path=str(self.home / "data/brain/core.md")))
 
     def test_bash(self):
         self.assertTrue(self.denies("Bash", command=f"cat {self.home}/brain/core.md"))
@@ -241,6 +296,9 @@ class TestGuard(HomeTest):
         self.assertTrue(self.denies("Bash", command=f"cat {self.conf}"))
         self.assertFalse(self.denies("Bash", command=f"ls {self.home}-backup.tar.gz"))
         self.assertFalse(self.denies("Bash", command="mem search cache"))
+        self.assertFalse(self.denies("Bash", command=f"{self.home}/bin/mem search cache"))
+        self.assertTrue(self.denies("Bash", command=f"{self.home}/bin/mem search x; cat {self.home}/data/x"))
+        self.assertTrue(self.denies("Bash", command=f"cat {self.home}/binary"))
 
     def test_home_relative_spellings(self):
         h = Path.home() / ".claudysha-test-guard"
@@ -258,6 +316,7 @@ class TestGuard(HomeTest):
         target = str(self.home / "x")
         with self.assertRaises(SystemExit):
             claudysha.pause_guard(10)
+        claudysha.guard_pause_path().parent.mkdir(parents=True)
         claudysha.guard_pause_path().write_text("2999-01-01T00:00:00")  # written by hand: no effect
         self.assertTrue(self.denies("Read", file_path=target))
         claudysha.set_setting("dev_mode", "on")

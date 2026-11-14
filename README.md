@@ -65,7 +65,7 @@ git clone https://github.com/Nevysha/claudysha.git ~/claudysha
 
 1. writes the settings file if it doesn't exist (in a terminal it asks for the data folder, your name and your pronouns; otherwise it uses the defaults),
 2. creates the data folder, and lets each module create its part,
-3. offers to put the `claudysha` and `mem` commands on your PATH, as links in `~/.local/bin` (it asks in a terminal; `--path` says yes; it never replaces a file it didn't create). Not every setup has `~/.local/bin` on its PATH: if yours doesn't, it offers to add one marked line to your `~/.zshrc` or `~/.bashrc` (only in a terminal, only if you agree; otherwise it prints the line to add). `--remove` deletes its links and that line,
+3. links the `claudysha` and `mem` commands into `~/.claudysha/bin`, and offers to put that folder on your PATH: one marked line in your `~/.zshrc` or `~/.bashrc`, added only if you agree in a terminal or pass `--path` (otherwise it prints the line to add; nothing to do if your startup files already have it). `--remove` deletes the links and that line,
 4. registers the repo as a local marketplace (`nevysha`) and installs the plugin.
 
 Claude Code runs a cached copy of the plugin, made for its version (`version` in `.claude-plugin/plugin.json`). After pulling or editing, run `./install.sh` again: it refreshes the copy when the version changed. New sessions (or `/reload-plugins`) then use it.
@@ -78,7 +78,7 @@ Claude Code runs a cached copy of the plugin, made for its version (`version` in
 
 | Key | Default | Used by | What |
 |---|---|---|---|
-| `home` | `~/.claudysha` | plugin | the data folder (`CLAUDYSHA_HOME` overrides it) |
+| `home` | `~/.claudysha` | plugin | the plugin's folder, which holds the data folder (`CLAUDYSHA_HOME` overrides it) |
 | `user_name` | `the user` | modules | how Claude refers to you |
 | `user_pronouns` | `they/them` | modules | your pronouns |
 | `dev_mode` | `off` | plugin | extra commands for sessions working on claudysha itself ([dev mode](#dev-mode)); set with `claudysha dev on/off` |
@@ -86,25 +86,30 @@ Claude Code runs a cached copy of the plugin, made for its version (`version` in
 
 ## 📁 Data folder
 
-Everything claudysha keeps lives in one folder, never in the plugin itself. Each module owns its part:
+Everything claudysha keeps lives in one folder, never in the plugin's code:
 
 ```
 ~/.claudysha/
-  brain/      Memory module: core memory and backlog (its own git repo)
-  memory/     Memory module: long-term store
+  bin/          the plugin's: the claudysha and mem commands (links to the repo), for your PATH
+  state/        the plugin's: runtime state (the guard's pause in dev mode)
+  data/         yours: archived, restored by load, never opened by sessions (see guard)
+    brain/      Memory module: core memory and backlog (its own git repo)
+    memory/     Memory module: long-term store
 ```
 
-The folder is claudysha's alone: it is its memory, which sessions never open (see [guard](#guard)). Keep your own scripts and backups elsewhere, where sessions can use them.
+`data/` is claudysha's memory and nothing else: each module owns its part, and sessions only reach it through commands (see [guard](#guard)). Keep your own scripts and backups elsewhere, where sessions can use them.
+
+Older versions kept the data directly in `~/.claudysha`. The first run of a newer version (install or session start) moves it into `data/`, under the lock so no extraction writes meanwhile, and leaves links `brain` and `memory` to it for sessions still running older code. Archives made before the move load as they are.
 
 ## 📦 Archive and load
 
 ```
-./claudysha archive [file-or-folder]   # .tar.gz of the whole data folder
-./claudysha load <archive>             # replace the whole data folder with an archive
+./claudysha archive [file-or-folder]   # .tar.gz of the data folder (data/)
+./claudysha load <archive>             # replace the data folder with an archive
 ```
 
 - The archive covers every module. SQLite databases are copied consistently even while being written, and a `claudysha-archive.json` manifest identifies the archive.
-- `load` erases everything that isn't in the archive. It lists what would be erased and only proceeds when you **type `erase` in a terminal**. It refuses piped input, which stops accidental or scripted confirmations; a program could still fake a terminal, so the rest is a rule: Claude must never confirm a load for you. Before replacing anything it saves the current folder next to it (`~/.claudysha-before-load-<date>.tar.gz`). It rejects archives with absolute or `..` paths, links, or no manifest.
+- `load` erases everything that isn't in the archive. It lists what would be erased and only proceeds when you **type `erase` in a terminal**. It refuses piped input, which stops accidental or scripted confirmations; a program could still fake a terminal, so the rest is a rule: Claude must never confirm a load for you. Before replacing anything it saves the current data next to it (`~/.claudysha/data-before-load-<date>.tar.gz`). It rejects archives with absolute or `..` paths, links, or no manifest.
 - Modules that write in the background take a shared lock on the data folder, and `load` an exclusive one, so they never overlap.
 
 <a id="guard"></a>
@@ -113,7 +118,7 @@ The folder is claudysha's alone: it is its memory, which sessions never open (se
 
 Think of a brain: you can remember things, but you can't open your head to look inside. Sessions work the same way. They reach their memory only through the modules' commands (`mem search`, `mem core ...`, `mem backlog ...`), and what the plugin shows them talks about "long-term memory", "core memory" and "backlog", never about files, folders or how it works. So it makes sense to someone who never looked inside the plugin, and Claude never edits its memory by hand.
 
-A PreToolUse hook (`claudysha guard check`) enforces it: it refuses Read, Edit, Write, Grep, Glob and shell commands that touch the data folder or the settings file (so a session can't turn the guard off), and points Claude to the commands. Path tools are checked by resolving their path; shell commands by looking for the folder's path in the text, which stops mistakes rather than someone set on getting in (the rest is a rule in the skill: never work around it). The settings file is free until it exists, so Claude can still write it when installing claudysha for you.
+A PreToolUse hook (`claudysha guard check`) enforces it: it refuses Read, Edit, Write, Grep, Glob and shell commands that touch `~/.claudysha` (all but `bin/` and `state/`) or the settings file (so a session can't turn the guard off), and points Claude to the commands. Path tools are checked by resolving their path; shell commands by looking for the folder's path in the text, which stops mistakes rather than someone set on getting in (the rest is a rule in the skill: never work around it). The settings file is free until it exists, so Claude can still write it when installing claudysha for you.
 
 To look inside yourself, use your own terminal. For diagnostics, sessions have commands: `mem log` (recent extraction runs and errors) and `mem stats`. To let a session in, for example to debug the plugin, turn on dev mode.
 

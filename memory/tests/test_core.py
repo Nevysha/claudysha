@@ -22,20 +22,20 @@ class CoreTest(unittest.TestCase):
         self.addCleanup(env.stop)
 
     def write(self, rel, text):
-        p = self.home / rel
+        p = self.home / "data" / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
 
     def test_paths(self):
-        self.assertEqual((core.brain_dir(), core.store_dir()), (self.home / "brain", self.home / "memory"))
+        self.assertEqual((core.brain_dir(), core.store_dir()), (self.home / "data/brain", self.home / "data/memory"))
 
     def test_init_creates_layout_and_keeps_existing_files(self):
         self.write("brain/core.md", "mine")
         core.init()
-        self.assertEqual((self.home / "brain/core.md").read_text(), "mine")
+        self.assertEqual((self.home / "data/brain/core.md").read_text(), "mine")
         for rel in ("brain/maybe-later/README.md", "memory"):
-            self.assertTrue((self.home / rel).exists(), rel)
-        self.assertFalse((self.home / "brain/memories").exists())  # retired topic notes
+            self.assertTrue((self.home / "data" / rel).exists(), rel)
+        self.assertFalse((self.home / "data/brain/memories").exists())  # retired topic notes
 
     def test_session_start_prints_core_without_paths_or_topic_notes(self):
         self.conf.write_text("user_name = Alex\nuser_pronouns = he/him\n")
@@ -64,7 +64,7 @@ class CoreTest(unittest.TestCase):
     def test_core_commands(self):
         import subprocess
         self.write("brain/core.md", "# Core\n\n## Who\n\n- Alex\n\n## Working together\n\n- be nice\n")
-        b = self.home / "brain"
+        b = self.home / "data/brain"
         subprocess.run(["git", "init", "-q", str(b)], check=True)
         for k, v in (("user.email", "t@example.com"), ("user.name", "Test")):
             subprocess.run(["git", "-C", str(b), "config", k, v], check=True)
@@ -86,7 +86,7 @@ class CoreTest(unittest.TestCase):
         for argv in (("edit", "--old", "x", "--new", "y"), ("remove", "x"), ("add", "z", "--section", "Nope")):
             with self.assertRaises(SystemExit):
                 self.run_cli(*argv)
-        self.assertEqual((self.home / "brain/core.md").read_text(), "- a x\n- b x\n")
+        self.assertEqual((self.home / "data/brain/core.md").read_text(), "- a x\n- b x\n")
 
 if __name__ == "__main__":
     unittest.main()

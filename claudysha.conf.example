@@ -2,7 +2,8 @@
 # (or $XDG_CONFIG_HOME/claudysha/claudysha.conf) if it doesn't exist yet: edit that copy.
 # Lines are `key = value`; `#` starts a comment.
 
-# The data folder, where every module keeps its data (see the README).
+# The plugin's folder: its commands (bin/), and your data (data/), where every module keeps
+# its part (see the README).
 home = ~/.claudysha
 
 # Who Claude works with. Used by the modules (prompts, session notes).

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Memory module: its folders in the data folder, and core memory.
 
-Data, inside the plugin's data folder:
+Data, inside the plugin's data folder (claudysha.data_dir()):
     brain/     hand-written tier 2, its own git repo:
                  core.md       who the user is, how to work with them
                  maybe-later/  backlog of postponed ideas (see backlog.py)
@@ -24,11 +24,11 @@ import claudysha  # noqa: E402  (the plugin: settings, data folder)
 
 
 def brain_dir():
-    return claudysha.home() / "brain"
+    return claudysha.data_dir() / "brain"
 
 
 def store_dir():
-    return claudysha.home() / "memory"
+    return claudysha.data_dir() / "memory"
 
 
 CORE_TEMPLATE = """# Who I work with, and how
