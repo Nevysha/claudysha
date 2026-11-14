@@ -91,6 +91,75 @@ class TestWriting(StoreTest):
             self.add("x", type_="opinion")
 
 
+class TestCleanup(StoreTest):
+    """merge, split and similar: the commands behind the memory-cleanup skill."""
+
+    def run_cmd(self, fn, **kw):
+        with redirect_stdout(io.StringIO()) as out:
+            fn(self.db, mock.Mock(**kw))
+        return out.getvalue()
+
+    def test_merge_replaces_every_entry_with_one(self):
+        a = self.add("The media server runs Jellyfin", tags="media")
+        b = self.add("Jellyfin is the media server, on port 8096", tags="jellyfin", confidence=0.95)
+        out = self.run_cmd(mem.cmd_merge, ids=[a, b], text="The media server runs Jellyfin on port 8096",
+                           type=None, scope=None)
+        new = self.db.execute("SELECT * FROM memories WHERE status = 'active'").fetchall()
+        self.assertEqual(len(new), 1)
+        self.assertIn(f"into #{new[0]['id']}", out)
+        self.assertEqual((new[0]["tags"], new[0]["confidence"], new[0]["scope"]), ("media jellyfin", 0.95, "homelab"))
+        self.assertEqual(json.loads(new[0]["meta"]), {"merged_from": [a, b]})
+        for old in (a, b):
+            self.assertEqual(mem.get(self.db, old)["superseded_by"], new[0]["id"])
+
+    def test_merge_keeps_proposed_entries_waiting(self):
+        a = self.add("Keep answers short", type_="feedback", status="active")
+        b = self.add("Answers should be short and plain", type_="feedback", status="proposed")
+        self.run_cmd(mem.cmd_merge, ids=[a, b], text="Keep answers short and plain", type=None, scope=None)
+        self.assertEqual(self.db.execute("SELECT status FROM memories WHERE superseded_by IS NULL").fetchone()[0],
+                         "proposed")
+
+    def test_merge_and_split_refuse_old_entries(self):
+        a, b = self.add("one"), self.add("two")
+        self.db.execute("UPDATE memories SET status = 'superseded' WHERE id = ?", (b,))
+        with self.assertRaises(SystemExit):
+            self.run_cmd(mem.cmd_merge, ids=[a, b], text="x", type=None, scope=None)
+        with self.assertRaises(SystemExit):
+            self.run_cmd(mem.cmd_merge, ids=[a, a], text="x", type=None, scope=None)
+        with self.assertRaises(SystemExit):
+            self.run_cmd(mem.cmd_split, id=b, texts=["x", "y"], type=None)
+        with self.assertRaises(SystemExit):
+            self.run_cmd(mem.cmd_split, id=a, texts=["only one"], type=None)
+
+    def test_split_makes_one_entry_per_thing(self):
+        a = self.add("The NAS has two disks, and the backups run nightly at 03:00", tags="nas")
+        self.run_cmd(mem.cmd_split, id=a, texts=["The NAS has two disks", "The backups run nightly at 03:00"],
+                     type=None)
+        old = mem.get(self.db, a)
+        self.assertEqual(old["status"], "superseded")
+        new = json.loads(old["meta"])["split_into"]
+        self.assertEqual(old["superseded_by"], new[0])
+        self.assertEqual([mem.get(self.db, i)["text"] for i in new],
+                         ["The NAS has two disks", "The backups run nightly at 03:00"])
+        self.assertEqual({mem.get(self.db, i)["tags"] for i in new}, {"nas"})
+
+    def test_similar_groups_overlaps_but_not_chains(self):
+        a = self.add("The media server runs Jellyfin on port 8096")
+        b = self.add("Jellyfin on port 8096 is the media server; its library is on the second disk")
+        c = self.add("Jellyfin is the media server", scope="global")
+        self.add("The second disk holds the backups, rotated weekly")
+        self.add("The router hands out addresses in the 10.0.0.0/24 range")
+        self.add("The media server runs Jellyfin on port 8096", scope="laptop")  # another scope
+        groups = mem.similar_groups(self.db, "homelab")
+        self.assertEqual([[r["id"] for r in rows] for _, rows in groups], [[a, b, c]])
+        out = self.run_cmd(mem.cmd_similar, scope="homelab", limit=30, min_score=0.3)
+        self.assertIn(f"#{c} [fact/global", out)
+        self.assertEqual(self.db.execute("SELECT SUM(use_count) FROM memories").fetchone()[0], 0)
+        self.assertIn(f"#{c} [fact/global", self.run_cmd(mem.cmd_similar, scope="laptop", limit=30, min_score=0.3))
+        self.add("The desk lamp is on a smart plug", scope="office")
+        self.assertIn("nothing alike", self.run_cmd(mem.cmd_similar, scope="office", limit=30, min_score=0.3))
+
+
 class TranscriptTest(StoreTest):
     def write_transcript(self, lines):
         path = Path(self.tmp.name) / "s.jsonl"
@@ -228,6 +297,19 @@ class TestIngest(TranscriptTest):
         self.assertEqual(mem.get(self.db, r["superseded_by"])["text"], items[0]["text"])
         self.assertEqual(mem.get(self.db, same)["use_count"], 1)
         self.assertIn(f"#{old}", self.resolve_prompts[0])
+
+    def test_resolve_keeps_only_what_a_new_item_adds(self):
+        stored = self.add("The media server runs Jellyfin")
+        items = [{"text": "The media server runs Jellyfin, and the router uses the 10.0.0.0/24 range",
+                  "type": "fact", "scope": "homelab", "confidence": 0.9}]
+        decisions = [{"new": 0, "duplicate_of": None, "supersedes": [],
+                      "keep_only": "The router uses the 10.0.0.0/24 range"}]
+        with self.fake_claude(items, decisions):
+            self.assertEqual(mem.ingest(self.db, self.transcript(), "s1")[:3], (1, 0, 0))
+        texts = [r["text"] for r in self.db.execute("SELECT text FROM memories ORDER BY id")]
+        self.assertEqual(texts, ["The media server runs Jellyfin", "The router uses the 10.0.0.0/24 range"])
+        self.assertEqual(mem.get(self.db, stored)["status"], "active")
+        self.assertIn("keep_only", mem.RESOLVE_SCHEMA["properties"]["decisions"]["items"]["required"])
 
     def test_sessions_without_human_messages_are_skipped(self):
         path = self.write_transcript([

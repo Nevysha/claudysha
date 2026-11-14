@@ -4,11 +4,13 @@
 See README.md for the design. Run `mem -h` for the commands.
 """
 import argparse
+import collections
 import contextlib
 import datetime as dt
 import difflib
 import fcntl
 import json
+import math
 import os
 import re
 import sqlite3
@@ -222,6 +224,62 @@ def similar_existing(db, text, scope, threshold=0.82):
     return None
 
 
+WORD = re.compile(r"[\w.:/@-]*\w")
+
+
+def words(text):
+    return {w for w in WORD.findall(text.lower()) if len(w) > 2}
+
+
+def similar_groups(db, scope, min_score=0.3):
+    """Groups of current memories of `scope` that look alike (with `global` ones they repeat).
+
+    Score of a pair: the share of the shorter entry's words found in the other, each word weighted
+    by how rare it is in the scope (a name in every entry counts for little). It catches an entry
+    that repeats another one and adds something, which plain text similarity misses.
+    Returns [(score, [rows])], best first.
+    """
+    rows = db.execute("SELECT * FROM memories WHERE status IN ('active', 'proposed') AND scope IN (?, ?)",
+                      (scope, GLOBAL)).fetchall()
+    bag = {r["id"]: words(r["text"]) for r in rows}
+    df = collections.Counter(w for ws in bag.values() for w in ws)
+    idf = {w: math.log((len(rows) + 1) / n) for w, n in df.items()}
+    by_id = {r["id"]: r for r in rows}
+    pairs = {}
+    for r in rows:
+        if r["scope"] != scope:
+            continue
+        for h in search(db, r["text"], scopes=[scope, GLOBAL], limit=8):
+            if h["id"] == r["id"] or (h["id"], r["id"]) in pairs:
+                continue
+            a, b = bag[r["id"]], bag.get(h["id"], set())
+            weight = min(sum(idf[w] for w in a), sum(idf[w] for w in b))
+            if not weight:
+                continue
+            score = sum(idf[w] for w in a & b) / weight
+            if score >= min_score:
+                pairs[(r["id"], h["id"])] = score
+    # Complete linkage: an entry joins a group only if it looks like every member, so a chain
+    # (A like B, B like C) doesn't pull unrelated entries together.
+    def alike(a, b):
+        return pairs.get((a, b)) or pairs.get((b, a)) or 0
+
+    group_of, groups = {}, []
+    for a, b in sorted(pairs, key=pairs.get, reverse=True):
+        ga, gb = group_of.get(a), group_of.get(b)
+        if ga is None and gb is None:
+            groups.append([a, b])
+            group_of[a] = group_of[b] = len(groups) - 1
+        elif (ga is None) != (gb is None):
+            g, new = (gb, a) if ga is None else (ga, b)
+            if all(alike(new, m) for m in groups[g]):
+                groups[g].append(new)
+                group_of[new] = g
+    out = [(max(alike(x, y) for x in ids for y in ids if x != y), [by_id[i] for i in sorted(ids)])
+           for ids in groups]
+    return sorted(out, key=lambda g: -g[0])
+
+
 def insert(db, text, type_, scope=GLOBAL, tags="", confidence=0.7,
            status="active", source="manual", session_id=None, meta=None, created_at=None):
     if type_ not in TYPES:
@@ -364,8 +422,9 @@ RESOLVE_SCHEMA = {
             "new": {"type": "integer"},
             "duplicate_of": {"type": ["integer", "null"]},
             "supersedes": {"type": "array", "items": {"type": "integer"}},
+            "keep_only": {"type": ["string", "null"]},
         },
-        "required": ["new", "duplicate_of", "supersedes"],
+        "required": ["new", "duplicate_of", "supersedes", "keep_only"],
     }}},
     "required": ["decisions"],
 }
@@ -405,7 +464,8 @@ def call_model(excerpt, date, scope):
 def resolve(db, items, date, scopes):
     """Compare new items with the closest stored memories of these scopes.
 
-    Returns ({new_index: duplicate_id}, {new_index: [superseded ids]}, cost).
+    Returns ({new_index: duplicate_id}, {new_index: [superseded ids]},
+             {new_index: text to store instead, without what's already stored}, cost).
     """
     blocks, known = [], set()
     for i, it in enumerate(items):
@@ -416,19 +476,22 @@ def resolve(db, items, date, scopes):
         lines = "\n".join(f"  #{r['id']} ({r['created_at'][:10]}, {r['type']}) {r['text']}" for r in near)
         blocks.append(f"NEW {i} ({(date or '?')[:10]}, {it['type']}): {it['text']}\nclosest stored:\n{lines}")
     if not blocks:
-        return {}, {}, 0.0
+        return {}, {}, {}, 0.0
     system = prompt_text(PROMPT_PATH.parent / "resolve.md")
     out, cost = run_claude(system, "\n\n".join(blocks), RESOLVE_SCHEMA)
-    dups, sups = {}, {}
+    dups, sups, trims = {}, {}, {}
     for d in out.get("decisions", []):
         i = d.get("new")
         if not isinstance(i, int) or not 0 <= i < len(items):
             continue
         if d.get("duplicate_of") in known:
             dups[i] = d["duplicate_of"]
-        elif d.get("supersedes"):
+            continue
+        if d.get("supersedes"):
             sups[i] = [s for s in d["supersedes"] if s in known]
-    return dups, sups, cost
+        if (d.get("keep_only") or "").strip():
+            trims[i] = d["keep_only"].strip()
+    return dups, sups, trims, cost
 
 
 def mark_ingested(db, session_id, transcript_path, last_line):
@@ -474,10 +537,10 @@ def ingest(db, transcript_path, session_id, dry_run=False):
                     print(f"[{it['type']}/{it['scope']} c{it.get('confidence', 0):.1f}] {it['text']}")
                 added += len(items)
                 continue
-            dups, sups, c = resolve(db, items, date, [scope, GLOBAL])
+            dups, sups, trims, c = resolve(db, items, date, [scope, GLOBAL])
             cost += c
             for i, it in enumerate(items):
-                body = it["text"].strip()
+                body = trims.get(i) or it["text"].strip()
                 dup_id = dups.get(i)
                 if dup_id is None:
                     dup = similar_existing(db, body, it["scope"])
@@ -568,6 +631,60 @@ def cmd_supersede(db, a):
     db.execute("UPDATE memories SET status = 'superseded', superseded_by = ? WHERE id = ?", (new_id, old["id"]))
     db.commit()
     print(f"#{old['id']} superseded by #{new_id}")
+
+
+def current(db, id_):
+    r = get(db, id_)
+    if r["status"] not in ("active", "proposed"):
+        raise SystemExit(f"#{id_} is {r['status']}: only current memories can be replaced")
+    return r
+
+
+def cmd_merge(db, a):
+    """Several memories that say the same thing (or overlap) become one entry."""
+    olds = [current(db, i) for i in dict.fromkeys(a.ids)]
+    if len(olds) < 2:
+        raise SystemExit("give at least two memories to merge")
+    first = olds[0]
+    tags = " ".join(dict.fromkeys(" ".join(r["tags"] for r in olds).split()))
+    status = "proposed" if any(r["status"] == "proposed" for r in olds) else "active"
+    new_id = insert(db, a.text, a.type or first["type"], a.scope or first["scope"], tags,
+                    max(r["confidence"] for r in olds), status=status,
+                    meta={"merged_from": [r["id"] for r in olds]})
+    db.executemany("UPDATE memories SET status = 'superseded', superseded_by = ? WHERE id = ?",
+                   [(new_id, r["id"]) for r in olds])
+    db.commit()
+    print(f"merged {', '.join(f'#{r[0]}' for r in olds)} into #{new_id}"
+          + (" (proposed: waiting for the user's review)" if status == "proposed" else ""))
+
+
+def cmd_split(db, a):
+    """A memory that states several things becomes one entry per thing."""
+    old = current(db, a.id)
+    texts = [t.strip() for t in a.texts if t.strip()]
+    if len(texts) < 2:
+        raise SystemExit("give at least two texts, one per entry")
+    new_ids = [insert(db, t, a.type or old["type"], old["scope"], old["tags"], old["confidence"],
+                      status=old["status"], meta={"split_from": old["id"]}) for t in texts]
+    meta = {**json.loads(old["meta"] or "{}"), "split_into": new_ids}
+    db.execute("UPDATE memories SET status = 'superseded', superseded_by = ?, meta = ? WHERE id = ?",
+               (new_ids[0], json.dumps(meta), old["id"]))
+    db.commit()
+    print(f"#{old['id']} split into " + ", ".join(f"#{i}" for i in new_ids))
+
+
+def cmd_similar(db, a):
+    scope = a.scope or claudysha.current_scope()
+    groups = similar_groups(db, scope, a.min_score)
+    for score, rows in groups[:a.limit]:
+        print(f"-- looks alike ({score:.2f})")
+        for r in rows:
+            print(fmt(r))
+        print()
+    if not groups:
+        print(f"(nothing alike in {scope})")
+    elif len(groups) > a.limit:
+        print(f"({len(groups) - a.limit} more groups: -n {len(groups)} shows them all)")
 
 
 def cmd_set_status(status):
@@ -699,9 +816,10 @@ def commands_note(user):
     return (f"\nMemory commands (`mem` is `{m}`; the claudysha:recall skill has the details):\n"
             "- `mem search <words...> [-s <scope> | -A] [-t <type>]`: several words, exact tokens kept; "
             "`mem get <id...>` shows entries in full, `mem list [-s <scope>] [-t <type>]` the latest\n"
-            "- `mem add \"<self-contained sentence, with the why>\" -t <type> [-s global]`: types fact, "
+            "- `mem add \"<one fact, self-contained, with the why>\" -t <type> [-s global]`: types fact, "
             "decision, dead_end, event, todo, preference, feedback; default scope is this session's\n"
-            "- `mem supersede <id> \"<corrected text>\"`: when a memory turned out wrong or outdated\n"
+            "- `mem supersede <id> \"<corrected text>\"`: when a memory turned out wrong or outdated; "
+            "`mem merge`, `mem split` for duplicates and entries stating several things\n"
             f"- `mem core show|add|edit|remove`: core memory, changed only with {user}'s OK\n"
             "- `mem backlog list|show|add|update|done`: postponed ideas with a review date\n"
             "- `mem log`, `mem stats`: recent memory runs and errors, counts per scope")
@@ -886,8 +1004,28 @@ def main():
     s.add_argument("-c", "--confidence", type=float)
     s.set_defaults(fn=cmd_edit)
 
-    for name, status in (("approve", "active"), ("reject", "rejected")):
-        s = sub.add_parser(name, help=f"mark proposed memories {status}")
+    s = sub.add_parser("merge", help="turn memories that repeat or overlap into one entry")
+    s.add_argument("ids", nargs="+", type=int)
+    s.add_argument("--text", required=True, help="the one entry that replaces them")
+    s.add_argument("-t", "--type", choices=TYPES, help="default: the first memory's")
+    s.add_argument("-s", "--scope", help="default: the first memory's")
+    s.set_defaults(fn=cmd_merge)
+
+    s = sub.add_parser("split", help="turn a memory that states several things into one entry per thing")
+    s.add_argument("id", type=int)
+    s.add_argument("texts", nargs="+", metavar="text")
+    s.add_argument("-t", "--type", choices=TYPES, help="default: the memory's")
+    s.set_defaults(fn=cmd_split)
+
+    s = sub.add_parser("similar", help="groups of memories that look alike (duplicates, overlaps)")
+    s.add_argument("-s", "--scope", help="default: this session's scope (compared with global too)")
+    s.add_argument("-n", "--limit", type=int, default=30, help="groups shown")
+    s.add_argument("--min-score", type=float, default=0.3, help="0 to 1: share of words in common")
+    s.set_defaults(fn=cmd_similar)
+
+    for name, status, what in (("approve", "active", "mark proposed memories active"),
+                               ("reject", "rejected", "reject proposed memories, or forget wrong ones")):
+        s = sub.add_parser(name, help=what)
         s.add_argument("ids", nargs="+", type=int)
         s.set_defaults(fn=cmd_set_status(status))
 

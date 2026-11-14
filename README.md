@@ -207,6 +207,7 @@ Each memory has `text`, `type`, `scope`, `tags`, `confidence` (0 to 1), `status`
 
 - Types: `fact`, `decision`, `dead_end`, `event`, `todo`, `preference`, `feedback`.
 - Statuses: `active`, `proposed`, `superseded`, `rejected`. Extracted `preference` and `feedback` entries shape how Claude behaves, so they stay `proposed` until you approve them: `mem review` in a terminal (one at a time, single keys), or `/claudysha:memory-review` in a session.
+- One fact per entry: each memory states one thing, says it once, and is still true. Extraction aims for that (below), and `/claudysha:memory-cleanup` fixes what slips through: in a session, Claude goes over one scope (`mem similar` finds the entries that look alike, then it reads the whole list for outdated, contradicting and multi-fact entries) and proposes merges, splits, corrections and removals in batches, applied only with your OK. Replaced entries stay as history.
 
 ### Scopes
 
@@ -231,8 +232,10 @@ Three hooks run `mem hook`: SessionEnd, PreCompact, and Stop (after each of Clau
 2. skips sessions you never typed in (`claude -p` runs from scripts have no message with `origin.kind == "human"`),
 3. condenses it to the dialogue plus short tool hints (no tool output, no thinking); user-role messages that aren't yours (task notifications, summaries) are labelled as notes,
 4. asks Haiku (`claude -p --model haiku`, structured output, `memory/store/prompts/extract.md`) for memories,
-5. sends each candidate with its closest stored memories to a second call (`memory/store/prompts/resolve.md`) that marks duplicates and memories it makes obsolete,
+5. sends each candidate with its closest stored memories to a second call (`memory/store/prompts/resolve.md`) that marks duplicates, memories it makes obsolete or repeats with more detail, and candidates that repeat a stored memory before adding a separate fact (only the added fact is kept),
 6. stores the rest and supersedes the obsolete ones.
+
+Both prompts ask for one fact per entry: a candidate that joins unrelated things becomes several.
 
 Child `claude -p` runs set `MEM_NO_HOOK=1` and load no settings, so they never trigger extraction themselves. `MEM_EXTRACT_MODEL` overrides the model. It costs well under a cent per extraction run.
 
@@ -244,9 +247,12 @@ mem add "<text>" [-t type] [-s scope] [--tags ...] [-c 0.9]  # default scope: th
 mem get <id...>
 mem list [-s scope] [-t type] [-n 20]
 mem supersede <id> "<new text>"  |  mem supersede <id> --by <id>
+mem merge <id> <id...> --text "<one entry>"   # entries that repeat each other become one
+mem split <id> "<text>" "<text>" [...]         # an entry stating several things becomes one per thing
+mem similar [-s scope] [-n 30] [--min-score 0.3]   # groups of entries that look alike (with the global ones they repeat)
 mem edit <id> [--text ...] [-t ...] [-s ...] [--tags ...] [-c ...]
 mem review [-l]                   # (or the dashboard's Review page) one by one: a approve, r reject, e edit, t type, s skip, u undo (-l: list)
-mem approve <id...>  |  mem reject <id...>
+mem approve <id...>  |  mem reject <id...>   # reject also forgets a wrong entry nothing replaces
 mem ingest <transcript.jsonl> [--dry-run]
 mem backfill [--project-dir <folder under ~/.claude/projects>]
 mem rescope [--apply]            # file memories under the scope of their session
@@ -293,10 +299,11 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | SessionEnd, PreCompact and Stop: `mem hook` (Stop only every `memory_every_lines` new transcript lines) | long-term store |
 | `claudysha:recall` skill: the `mem` commands for all three parts, in detail, with the rules for using them | long-term store, core memory, backlog |
 | `/claudysha:memory-review` skill: review proposed memories in the chat | long-term store |
+| `claudysha:memory-cleanup` skill: go over a scope's memories for duplicates, overlaps, outdated and multi-fact entries, and fix them with your OK (you start it, or Claude offers it) | long-term store |
 
 ## 🛣️ Not done yet
 
-- A consolidation pass that proposes promotions from the store to the core, merges, and expiry of stale todos.
+- A consolidation pass that proposes promotions from the store to the core, and expiry of stale todos.
 - Meaning search with `sqlite-vec`, if keyword search starts missing things.
 
 ---

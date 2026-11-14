@@ -41,6 +41,17 @@ ${CLAUDE_PLUGIN_ROOT}/mem supersede <id> "<corrected text>"
 
 `add` files the memory under this session's scope; `-s global` is for what holds everywhere. You remember sessions on your own as they go, so only add by hand what matters right away, or correct what you found wrong. Use absolute dates. Never store secrets.
 
+One fact per entry: each memory states one thing, with its reason. Two unrelated things are two `add`s. If what you want to add repeats a stored memory with more detail, `supersede` that memory instead of adding a second one.
+
+```
+${CLAUDE_PLUGIN_ROOT}/mem merge <id> <id...> --text "<one entry>"     # entries that repeat each other become one
+${CLAUDE_PLUGIN_ROOT}/mem split <id> "<first>" "<second>" [...]       # an entry stating several things
+${CLAUDE_PLUGIN_ROOT}/mem reject <id...>                              # forget a wrong entry nothing replaces
+${CLAUDE_PLUGIN_ROOT}/mem similar [-s scope]                          # groups of entries that look alike
+```
+
+When you notice duplicates or outdated entries, fix the one at hand if it's clear, and offer the user a full cleanup (the claudysha:memory-cleanup skill) rather than starting it unasked.
+
 ### Proposed entries
 
 Preferences and feedback you pick up on your own shape how you behave, so they wait as `proposed` until the user approves them. Never approve them yourself: the user reviews them with `/claudysha:memory-review`, or `mem review` in a terminal.

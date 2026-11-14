@@ -17,6 +17,7 @@ Be generous: when in doubt about whether something is useful, include it with a 
 - Only lines starting with "{{user}}:" are {{user}}'s words. Lines marked "[note, not from {{user}}]" are system notifications, summaries or messages from other agents: use them as context, but never attribute them to {{user}}.
 
 - Each item is self-contained: 1 to 3 sentences, understandable without the conversation. Name the system, file, path or version concretely.
+- One fact per item: a single fact, decision, dead end, event, todo, preference or feedback, with its reason. When a sentence joins unrelated things ("X uses port 8080, and the backups run nightly"), make separate items. Details about the same thing stay together.
 - Use absolute dates (YYYY-MM-DD). The excerpt's date is given below; convert "today", "yesterday", "tomorrow".
 - Include the reason when one is given ("X, because Y").
 - If something was decided and then corrected later in the excerpt, store only the final state (and maybe a dead_end for the abandoned path).
