@@ -31,7 +31,7 @@ Leave alone what is merely related: two entries about the same system that state
 
 ## 3. Propose, in batches
 
-Present the proposals in small batches (about 4 or 5), each with the ids and texts concerned (shortened if long), what's wrong, and the exact fix, including the new text when there is one. Ask the user about each proposal, with the question tool when you have one (apply, skip, or change it), and apply only what they approve.
+Gather all the proposals first, so you know how many batches there are. Present them in small batches (about 4 or 5), headed with where the user is ("Batch 2 of 5", plus the number of proposals left after this one), each proposal with the ids and texts concerned (shortened if long), what's wrong, and the exact fix, including the new text when there is one. Ask the user about each proposal, with the question tool when you have one (apply, skip, or change it), and apply only what they approve.
 
 Preferences and feedback shape how you behave: be extra careful with them, and never turn a fact into one without the user saying so.
 
