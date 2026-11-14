@@ -167,8 +167,8 @@ importers:
   .:
     dependencies:
       '@nevysha/ui':
-        specifier: github:Nevysha/design-system#v0.2.0
-        version: https://codeload.github.com/Nevysha/design-system/tar.gz/4a55e749f6b8cac77495f12adaa7456d6158efc4(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        specifier: github:Nevysha/design-system#v0.4.0
+        version: https://codeload.github.com/Nevysha/design-system/tar.gz/b718f963f6f5363aa730b6f3ea057367240ff07c(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       lucide-react:
         specifier: ^1.72.0
         version: 1.72.0(@types/react@19.3.0)(react@19.3.1)
@@ -443,9 +443,9 @@ packages:
       '@emnapi/core': ^1.7.1 || 2.0.0-beta.2
       '@emnapi/runtime': ^1.7.1 || 2.0.0-beta.2
 
-  '@nevysha/ui@https://codeload.github.com/Nevysha/design-system/tar.gz/4a55e749f6b8cac77495f12adaa7456d6158efc4':
-    resolution: {gitHosted: true, integrity: sha512-Gy2UT+6zuRhgndP9dPGCUMMkpdP8ln8y/yvtd/xPlWCrCejwTPZ3VamPRbyfwHkjsjrxmVsDG33b70gw0+Bt3w==, tarball: https://codeload.github.com/Nevysha/design-system/tar.gz/4a55e749f6b8cac77495f12adaa7456d6158efc4}
-    version: 0.2.0
+  '@nevysha/ui@https://codeload.github.com/Nevysha/design-system/tar.gz/b718f963f6f5363aa730b6f3ea057367240ff07c':
+    resolution: {gitHosted: true, integrity: sha512-I992iT9T4DM7WE0VCRR4dI6DM3Jo1C3pYUuOrJT9ljhlDWkGqB76GIaSjtPwf/BMGuaGsuOV1yMIsQGMaWqJnw==, tarball: https://codeload.github.com/Nevysha/design-system/tar.gz/b718f963f6f5363aa730b6f3ea057367240ff07c}
+    version: 0.4.0
     hasBin: true
     peerDependencies:
       react: '>=19'
@@ -2607,7 +2607,7 @@ snapshots:
       '@tybys/wasm-util': 0.10.4
     optional: true
 
-  '@nevysha/ui@https://codeload.github.com/Nevysha/design-system/tar.gz/4a55e749f6b8cac77495f12adaa7456d6158efc4(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
+  '@nevysha/ui@https://codeload.github.com/Nevysha/design-system/tar.gz/b718f963f6f5363aa730b6f3ea057367240ff07c(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)':
     dependencies:
       '@fontsource-variable/montserrat': 5.3.0
       class-variance-authority: 0.7.1
