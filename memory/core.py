@@ -75,8 +75,8 @@ def session_start_text():
     if not text:
         return ""
     name, pronouns = claudysha.user_name(), claudysha.user_pronouns()
-    return (f"[claudysha] You work with {name} ({pronouns}). Here is {name}'s core memory: who they are and "
-            f"how they want you to work with them. It applies to every session. Change it only with "
+    return (f"[claudysha] You work with {name} ({pronouns}). Here is {name}'s core memory: who {name} is and "
+            f"how {name} wants you to work together. It applies to every session. Change it only with "
             f"{name}'s OK (the claudysha:recall skill explains how).\n\n" + text)
 
 
