@@ -119,6 +119,13 @@ class BacklogCommandsTest(unittest.TestCase):
         self.assertIn("owner: me", text)
         self.assertIn("# Title\n\n---\nmore", text)
 
+    def test_edit_replaces_one_passage(self):
+        self.run_cli("add", "Clean up", "--details", "old path here; old path there")
+        with self.assertRaises(SystemExit):
+            self.run_cli("edit", "clean-up", "--old", "old path", "--new", "new path")
+        self.run_cli("edit", "clean-up", "--old", "old path here", "--new", "new path here")
+        self.assertIn("new path here; old path there", self.run_cli("show", "clean-up"))
+
     def test_unknown_or_unsafe_ids_and_bad_dates(self):
         for bad in ("nope", "../core", "README"):
             with self.assertRaises(SystemExit):

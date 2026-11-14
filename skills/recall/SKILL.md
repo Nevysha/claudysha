@@ -65,6 +65,7 @@ ${CLAUDE_PLUGIN_ROOT}/mem backlog list [-a]                 # DUE marks items to
 ${CLAUDE_PLUGIN_ROOT}/mem backlog show <id>
 ${CLAUDE_PLUGIN_ROOT}/mem backlog add "<one-line summary>" --review-after YYYY-MM-DD --details "<context a future session needs>"
 ${CLAUDE_PLUGIN_ROOT}/mem backlog update <id> [--review-after YYYY-MM-DD|none] [--status open|waiting|someday|done] [--summary ...] [--append "<news>"]
+${CLAUDE_PLUGIN_ROOT}/mem backlog edit <id> --old "<exact passage>" --new "<replacement>"
 ${CLAUDE_PLUGIN_ROOT}/mem backlog done <id>
 ```
 

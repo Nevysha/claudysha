@@ -209,7 +209,7 @@ mem rescope [--apply]            # file memories under the scope of their sessio
 mem stats  |  mem log  |  mem export   # counts, recent extraction runs, JSONL dump
 
 mem core show | add "<line>" [--section ...] | edit --old ... --new ... | remove "<text>"
-mem backlog list [-a] | show <id> | add "<summary>" [--review-after ...] [--details ...] | update <id> ... | done <id>
+mem backlog list [-a] | show <id> | add "<summary>" [--review-after ...] [--details ...] | update <id> ... | edit <id> --old ... --new ... | done <id>
 ```
 
 `mem core` and `mem backlog` commit each change in `brain/` with a Conventional Commit (`docs(memory): ...`, `docs(backlog): ...`).

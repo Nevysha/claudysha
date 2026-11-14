@@ -196,6 +196,16 @@ def cmd_update(a):
     print(f"updated backlog item {a.id}")
 
 
+def cmd_edit(a):
+    path = item_path(a.id)
+    try:
+        text = core.replace_once(path.read_text(), a.old, a.new)
+    except ValueError as e:
+        raise SystemExit(f"nothing changed: {e}")
+    save(path, text, f"docs(backlog): edit {a.id}")
+    print(f"updated backlog item {a.id}")
+
+
 def cli(argv=None, prog="mem backlog"):
     """`mem backlog ...`: list, read, add and change postponed ideas."""
     p = argparse.ArgumentParser(prog=prog, description="The backlog: postponed ideas, each with a review date. "
@@ -221,6 +231,11 @@ def cli(argv=None, prog="mem backlog"):
     s.add_argument("--details", help="replace the details")
     s.add_argument("--append", help="add to the details")
     s.set_defaults(fn=cmd_update)
+    s = sub.add_parser("edit", help="replace a passage of an item (it must appear exactly once)")
+    s.add_argument("id")
+    s.add_argument("--old", required=True)
+    s.add_argument("--new", required=True)
+    s.set_defaults(fn=cmd_edit)
     s = sub.add_parser("done", help="close an item")
     s.add_argument("id")
     s.set_defaults(fn=lambda a: cmd_update(argparse.Namespace(id=a.id, status="done", summary=None,
