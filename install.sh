@@ -7,11 +7,19 @@
 #   ./install.sh --remove   uninstall (keeps the home folder, removes those links)
 # In a terminal, it asks whether to add `claudysha` and `mem` to your PATH (links in ~/.local/bin).
 set -euo pipefail
+user_path="$PATH"                       # the PATH as the user had it, before the line below
 export PATH="$HOME/.local/bin:$PATH"   # claude's native install, also when run from Ansible
 dir="$(cd "$(dirname "$0")" && pwd)"
 plugin="claudysha@nevysha"
 bindir="$HOME/.local/bin"
 commands=(claudysha mem)
+marker="# added by claudysha install.sh"
+path_line="export PATH=\"\$HOME/.local/bin:\$PATH\"  $marker"
+case "$(basename "${SHELL:-}")" in
+    zsh) rcfile="$HOME/.zshrc"; startup=("$HOME/.zshenv" "$HOME/.zprofile" "$HOME/.zshrc") ;;
+    bash) rcfile="$HOME/.bashrc"; startup=("$HOME/.bash_profile" "$HOME/.profile" "$HOME/.bashrc") ;;
+    *) rcfile=""; startup=() ;;
+esac
 
 # Our link in ~/.local/bin, or nothing: never touch a file we didn't put there.
 ours() { [ -L "$bindir/$1" ] && [ "$(readlink -f "$bindir/$1")" = "$(readlink -f "$dir/$1")" ]; }
@@ -26,10 +34,27 @@ link_commands() {
         ln -sfn "$dir/$c" "$bindir/$c"   # a link to another clone is replaced by this one
         echo "linked $bindir/$c"
     done
-    case ":$PATH:" in
-        *":$bindir:"*) ;;
-        *) echo "note: $bindir is not on your PATH yet; add it in your shell's startup file" ;;
-    esac
+    ensure_bindir_on_path
+}
+
+# ~/.local/bin is on the PATH of most setups, not all: check the user's own PATH (not ours,
+# which has it), then the startup file of their shell, and only edit that file if they agree.
+ensure_bindir_on_path() {
+    case ":$user_path:" in *":$bindir:"*) return ;; esac
+    if [ -n "$rcfile" ] && grep -qs '\.local/bin' "${startup[@]}"; then
+        echo "note: open a new terminal to use the commands (your startup files add $bindir to the PATH)"
+        return
+    fi
+    if [ -n "$rcfile" ] && [ -t 0 ]; then
+        read -r -p "$bindir is not on your PATH. Add it in $rcfile? [Y/n] " answer
+        if [[ "${answer:-y}" == [Yy]* ]]; then
+            printf '\n%s\n' "$path_line" >> "$rcfile"
+            echo "added to $rcfile: open a new terminal to use the commands"
+            return
+        fi
+    fi
+    echo "note: $bindir is not on your PATH. Add this line to your shell's startup file${rcfile:+ ($rcfile)}:"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 }
 
 if [ "${1:-}" = "--remove" ]; then
@@ -37,6 +62,12 @@ if [ "${1:-}" = "--remove" ]; then
     claude plugin marketplace remove nevysha 2>/dev/null || true
     for c in "${commands[@]}"; do
         if ours "$c"; then rm "$bindir/$c"; echo "removed $bindir/$c"; fi
+    done
+    for f in "$HOME/.zshrc" "$HOME/.bashrc"; do
+        if grep -qsF "$marker" "$f"; then
+            grep -vF "$marker" "$f" > "$f.claudysha-tmp" && cat "$f.claudysha-tmp" > "$f" && rm "$f.claudysha-tmp"
+            echo "removed the PATH line from $f"
+        fi
     done
     echo "claudysha removed (its home folder is kept: $("$dir/claudysha" home))"
     exit 0

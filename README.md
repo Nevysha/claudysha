@@ -65,7 +65,7 @@ git clone https://github.com/Nevysha/claudysha.git ~/claudysha
 
 1. writes the settings file if it doesn't exist (in a terminal it asks for the data folder, your name and your pronouns; otherwise it uses the defaults),
 2. creates the data folder, and lets each module create its part,
-3. offers to put the `claudysha` and `mem` commands on your PATH, as links in `~/.local/bin` (it asks in a terminal; `--path` says yes; it never replaces a file it didn't create, and `--remove` deletes its links),
+3. offers to put the `claudysha` and `mem` commands on your PATH, as links in `~/.local/bin` (it asks in a terminal; `--path` says yes; it never replaces a file it didn't create). Not every setup has `~/.local/bin` on its PATH: if yours doesn't, it offers to add one marked line to your `~/.zshrc` or `~/.bashrc` (only in a terminal, only if you agree; otherwise it prints the line to add). `--remove` deletes its links and that line,
 4. registers the repo as a local marketplace (`nevysha`) and installs the plugin.
 
 Claude Code runs a cached copy of the plugin, made for its version (`version` in `.claude-plugin/plugin.json`). After pulling or editing, run `./install.sh` again: it refreshes the copy when the version changed. New sessions (or `/reload-plugins`) then use it.
