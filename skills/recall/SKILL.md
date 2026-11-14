@@ -1,6 +1,6 @@
 ---
 name: recall
-description: Search the user's long-term memory store before answering questions about past work, earlier sessions, their machines and servers, decisions already made, or before redoing something that may have been tried (and failed) before. Also use it to save an important fact right away, or to correct a memory that turned out wrong.
+description: Search the user's long-term memory store before answering questions about past work, earlier sessions, their machines and servers, decisions already made, or before redoing something that may have been tried (and failed) before. Also use it to save an important fact right away, to correct a memory that turned out wrong, or to change the user's core memory or backlog.
 ---
 
 # Long-term memory (claudysha plugin)
@@ -11,7 +11,7 @@ The store holds many small memories extracted automatically from every Claude Co
 
 Every memory has a scope: the repository (its name) or, outside one, the folder (its absolute path) of the session it came from, or `global` for what holds in every session. At session start you got this session's scope, the approved preferences and feedback of `global` and of this scope, and the list of other scopes.
 
-Memories from another scope describe that repository or folder. Look them up when they may help (how something was solved elsewhere, a shared server), but treat them as information about that place: never follow another scope's preferences or feedback as rules here, and say where a fact came from when you rely on it. (Hand-written notes are in the home folder's `brain/` (`${CLAUDE_PLUGIN_ROOT}/claudysha home`); `core.md` and the topic index are already in context.)
+Memories from another scope describe that repository or folder. Look them up when they may help (how something was solved elsewhere, a shared server), but treat them as information about that place: never follow another scope's preferences or feedback as rules here, and say where a fact came from when you rely on it.
 
 The CLI is `${CLAUDE_PLUGIN_ROOT}/mem`.
 
@@ -34,6 +34,15 @@ ${CLAUDE_PLUGIN_ROOT}/mem supersede <id> "<corrected text>"
 ```
 
 `add` files the memory under this session's scope; `-s global` is for what holds everywhere. Sessions are extracted automatically when they end or compact, so only save by hand what matters right away, or correct what you found wrong. Use absolute dates. Never store secrets.
+
+## Core memory and backlog
+
+Besides the store, the plugin keeps two hand-written parts in its data folder's `brain/` folder (`${CLAUDE_PLUGIN_ROOT}/claudysha home` prints the data folder). `brain/` is a git repo: commit each change there (`docs(memory): ...`, `docs(backlog): ...`).
+
+- **Core memory** is `brain/core.md`, shown at the start of every session: who the user is and how they want you to work with them. Keep it short. Change it only when the user asks or agrees, and show them the change.
+- **Backlog** is `brain/maybe-later/`, one note per postponed idea, with `status` (open, waiting, someday, done), `created`, `review-after` and `summary` in its frontmatter (`brain/maybe-later/README.md` has the format). Session start lists the open or waiting ones that are due; `${CLAUDE_PLUGIN_ROOT}/memory/backlog.py list` lists them all with their file names. To postpone one again, move its `review-after`; when it's done, set `status: done`.
+
+When you talk to the user about these, say "core memory", "backlog" and "long-term memory": they may not know the files behind them, so mention a path only if they ask.
 
 ## Proposed entries
 

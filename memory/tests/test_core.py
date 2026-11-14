@@ -33,19 +33,24 @@ class CoreTest(unittest.TestCase):
         self.write("brain/core.md", "mine")
         core.init()
         self.assertEqual((self.home / "brain/core.md").read_text(), "mine")
-        for rel in ("brain/memories/MEMORY.md", "brain/maybe-later/README.md", "memory"):
+        for rel in ("brain/maybe-later/README.md", "memory"):
             self.assertTrue((self.home / rel).exists(), rel)
+        self.assertFalse((self.home / "brain/memories").exists())  # retired topic notes
 
-    def test_session_start_prints_core_and_index(self):
+    def test_session_start_prints_core_without_paths_or_topic_notes(self):
         self.conf.write_text("user_name = Alex\nuser_pronouns = he/him\n")
         self.write("brain/core.md", "# Core\nbe nice")
-        self.write("brain/memories/MEMORY.md", "- [A](a.md)")
+        self.write("brain/memories/MEMORY.md", "- [A](a.md)")  # an older home: ignored
         text = core.session_start_text()
         self.assertIn("be nice", text)
-        self.assertIn("- [A](a.md)", text)
         self.assertIn("You work with Alex (he/him)", text)
+        self.assertNotIn("a.md", text)
+        self.assertNotIn(str(self.home), text)
+        self.assertNotIn("core.md", text)
 
     def test_session_start_empty_without_data(self):
+        self.assertEqual(core.session_start_text(), "")
+        self.write("brain/core.md", "  \n")
         self.assertEqual(core.session_start_text(), "")
 
 

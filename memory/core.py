@@ -4,11 +4,13 @@
 Data, inside the plugin's data folder:
     brain/     hand-written tier 2, its own git repo:
                  core.md       who the user is, how to work with them
-                 memories/     one note per topic, indexed in memories/MEMORY.md
                  maybe-later/  backlog of postponed ideas (see backlog.py)
     memory/    tier-1 store: memory.db and extract.log (see store/mem.py)
 
-Core memory: at session start, core.md and the topic index are printed into the session.
+Core memory: at session start, core.md is printed into the session. The session text talks about
+"core memory" and points to the claudysha:recall skill, never to files: a user who doesn't know the
+plugin's internals must still understand it. (Older homes may have brain/memories/, the retired topic
+notes: it is left alone, and kept in archives, but no longer created or loaded.)
 """
 import contextlib
 import os
@@ -32,10 +34,9 @@ def store_dir():
 CORE_TEMPLATE = """# Who I work with, and how
 
 Loaded into every Claude Code session by the claudysha plugin. Keep it short: only what should
-shape every session. Changes need the user's OK.
+shape every session. Changes need the user's OK. Facts learned in sessions go in the long-term
+memory store, not here.
 """
-
-INDEX_TEMPLATE = "Topic notes, in the brain folder's `memories/` (read the ones that matter for the task):\n"
 
 BACKLOG_README = """# maybe-later
 
@@ -58,10 +59,9 @@ The claudysha plugin's session start lists the notes whose `review-after` date h
 def init():
     """Create the memory module's folders and starter files. Never overwrites files."""
     b, m = brain_dir(), store_dir()
-    for d in (b / "memories", b / "maybe-later", m):
+    for d in (b / "maybe-later", m):
         d.mkdir(parents=True, exist_ok=True)
-    for path, text in ((b / "core.md", CORE_TEMPLATE), (b / "memories" / "MEMORY.md", INDEX_TEMPLATE),
-                       (b / "maybe-later" / "README.md", BACKLOG_README)):
+    for path, text in ((b / "core.md", CORE_TEMPLATE), (b / "maybe-later" / "README.md", BACKLOG_README)):
         if not path.exists():
             path.write_text(text)
     if not (b / ".git").exists() and shutil.which("git"):
@@ -69,20 +69,15 @@ def init():
 
 
 def session_start_text():
-    """core.md and the topic index, as context for every session."""
-    b = brain_dir()
-    parts = []
-    core = b / "core.md"
-    if core.is_file():
-        parts.append(core.read_text().strip())
-    index = b / "memories" / "MEMORY.md"
-    if index.is_file():
-        parts.append(f"## Topic notes (in {b / 'memories'})\n\n" + index.read_text().strip())
-    if not parts:
+    """Core memory, as context for every session (no file paths: see the module docstring)."""
+    core = brain_dir() / "core.md"
+    text = core.read_text().strip() if core.is_file() else ""
+    if not text:
         return ""
     name, pronouns = claudysha.user_name(), claudysha.user_pronouns()
-    return (f"[claudysha] You work with {name} ({pronouns}). Core memory from {b} "
-            f"(tier 2; edit those files only with {name}'s OK):\n\n" + "\n\n".join(parts))
+    return (f"[claudysha] You work with {name} ({pronouns}). Here is {name}'s core memory: who they are and "
+            f"how they want you to work with them. It applies to every session. Change it only with "
+            f"{name}'s OK (the claudysha:recall skill explains how).\n\n" + text)
 
 
 def main():

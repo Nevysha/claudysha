@@ -69,10 +69,12 @@ def cmd_session_start(a):
     items = due(folder, dt.date.today())
     if not items:
         return
-    lines = [f"Backlog: {len(items)} postponed item(s) in {folder} are due for review. "
-             f"Mention them to {claudysha.user_name()} once, briefly:"]
+    # No paths or file names here: the claudysha:recall skill explains where the backlog lives.
+    lines = [f"Backlog: {len(items)} postponed idea(s) are due for review. "
+             f"Mention them to {claudysha.user_name()} once, briefly (the claudysha:recall skill explains "
+             "how to update or close them):"]
     for n in items:
-        lines.append(f"- {n['file']} ({n.get('status')}, due {n.get('review-after')}): {n.get('summary', '')}")
+        lines.append(f"- {n.get('summary') or n['file']} ({n.get('status')}, due {n.get('review-after')})")
     print("\n".join(lines))
 
 

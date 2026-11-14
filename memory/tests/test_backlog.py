@@ -49,8 +49,10 @@ class BacklogTest(unittest.TestCase):
                 redirect_stdout(io.StringIO()) as out:
             env.pop("MEM_NO_HOOK", None)
             backlog.cmd_session_start(None)
-        self.assertIn("1 postponed item(s)", out.getvalue())
-        self.assertIn("due.md (open, due 2026-11-01): do it", out.getvalue())
+        self.assertIn("1 postponed idea(s)", out.getvalue())
+        self.assertIn("- do it (open, due 2026-11-01)", out.getvalue())
+        self.assertNotIn("due.md", out.getvalue())
+        self.assertNotIn(self.tmp.name, out.getvalue())
 
     def test_session_start_silent_when_nothing_due_or_no_folder(self):
         for brain in (Path(self.tmp.name), Path(self.tmp.name) / "missing"):

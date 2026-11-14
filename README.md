@@ -131,10 +131,12 @@ It has three parts:
 | Part | What | Data | In sessions |
 |---|---|---|---|
 | 🗄️ [Long-term store](#long-term-store) | facts, decisions, dead ends... extracted automatically from every session | `memory/memory.db` | searched on demand (`claudysha:recall` skill) |
-| ✍️ [Core memory](#core-memory) | who you are, how you want Claude to work with you, an index of topic notes | `brain/core.md`, `brain/memories/` | printed into every session |
+| ✍️ [Core memory](#core-memory) | who you are, how you want Claude to work with you | `brain/core.md` | printed into every session |
 | ⏰ [Backlog](#backlog) | postponed ideas with a review date | `brain/maybe-later/` | due items listed at session start |
 
 The split matters: the long-term store can capture generously because it's never loaded wholesale, while the core, which shapes how Claude behaves, stays small and only changes with your OK. `brain/` is a git repo, so every change to the hand-written notes has a history.
+
+What a session sees talks about "core memory", "long-term memory" and "backlog", not about files and folders, so it makes sense to someone who never looked inside the plugin. The `claudysha:recall` skill tells Claude where each part lives when it needs to change one.
 
 <a id="long-term-store"></a>
 
@@ -198,7 +200,9 @@ mem stats  |  mem export          # JSONL dump
 
 ## ✍️ Core memory
 
-`brain/core.md` holds who you are and how you want Claude to work with you; `brain/memories/` holds one note per topic, indexed in `brain/memories/MEMORY.md`. At session start (and again after a compaction), `memory/core.py` prints `core.md` and the index into the session, so they shape every session. You write these files (or approve Claude's edits); keep `core.md` short.
+`brain/core.md` holds who you are and how you want Claude to work with you. At session start (and again after a compaction), `memory/core.py` prints it into the session, so it shapes every session. You write it (or approve Claude's edits); keep it short. Facts belong in the long-term store, which is searched instead of loaded.
+
+Older versions also kept topic notes in `brain/memories/`, indexed in `MEMORY.md`. The long-term store replaced them: the folder is no longer created or loaded, but an existing one is left in place (and archived) as history.
 
 <a id="backlog"></a>
 
@@ -225,7 +229,7 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | SessionStart: `mem session-start` (a line saying the store exists, and how many memories wait for review) | long-term store |
 | SessionStart: `memory/backlog.py session-start` | backlog |
 | SessionEnd, PreCompact and Stop: `mem hook` (Stop only every `memory_every_lines` new transcript lines) | long-term store |
-| `claudysha:recall` skill: how to search, save and correct memories | long-term store |
+| `claudysha:recall` skill: how to search, save and correct memories, and change the core memory or backlog | long-term store, core memory, backlog |
 | `/claudysha:memory-review` skill: review proposed memories in the chat | long-term store |
 
 ## 🛣️ Not done yet
