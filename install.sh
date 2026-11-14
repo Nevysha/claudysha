@@ -112,7 +112,7 @@ if ! claude plugin list 2>/dev/null | grep -q "$plugin"; then
 fi
 # Claude Code runs a cached copy of the plugin, one per version: refresh it when the repo's
 # version is newer than the installed one.
-want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$dir/.claude-plugin/plugin.json")
+want=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$dir/plugins/claudysha/.claude-plugin/plugin.json")
 # (`claude plugin list` shows the repo's version, not the installed copy's: read Claude Code's record.)
 have=$(python3 - "$plugin" <<'PY' 2>/dev/null || true
 import json, os, sys

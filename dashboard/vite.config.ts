@@ -11,7 +11,7 @@ export default defineConfig({
   base: "/static/plugin/",
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
-    outDir: "../plugin/web",
+    outDir: "../plugins/claudysha/plugin/web",
     emptyOutDir: true,
     modulePreload: { polyfill: false }, // no inline code: the page's CSP allows only its own files
     chunkSizeWarningLimit: 1000,

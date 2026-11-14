@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "claudysha",
-      "source": "./",
+      "source": "./plugins/claudysha",
       "description": "A personal plugin for Claude Code"
     }
   ]
