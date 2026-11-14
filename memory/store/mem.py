@@ -628,9 +628,59 @@ def cmd_supersede(db, a):
             raise SystemExit("give the new text, or --by ID")
         new_id = insert(db, a.text, a.type or old["type"], a.scope or old["scope"],
                         old["tags"], old["confidence"])
-    db.execute("UPDATE memories SET status = 'superseded', superseded_by = ? WHERE id = ?", (new_id, old["id"]))
+    retire(db, old, "superseded", new_id)
     db.commit()
     print(f"#{old['id']} superseded by #{new_id}")
+
+
+def meta_of(r):
+    try:
+        return json.loads(r["meta"] or "{}")
+    except ValueError:
+        return {}
+
+
+def retire(db, r, status, by=None, **extra):
+    """Mark a memory superseded or rejected, remembering its status so `mem restore` can undo it."""
+    meta = {**meta_of(r), **extra}
+    if r["status"] in ("active", "proposed"):
+        meta["was"] = r["status"]
+    db.execute("UPDATE memories SET status = ?, superseded_by = ?, meta = ? WHERE id = ?",
+               (status, by, json.dumps(meta), r["id"]))
+
+
+def revive(db, r):
+    meta = meta_of(r)
+    status = meta.pop("was", "active")
+    meta.pop("split_into", None)
+    db.execute("UPDATE memories SET status = ?, superseded_by = NULL, meta = ? WHERE id = ?",
+               (status, json.dumps(meta), r["id"]))
+    return status
+
+
+def cmd_restore(db, a):
+    """Undo a supersede, merge, split or reject: the change that replaced the memory, as a whole."""
+    for id_ in a.ids:
+        r = get(db, id_)
+        if r["status"] in ("active", "proposed"):
+            print(f"#{id_} is already {r['status']}")
+            continue
+        newer = get(db, r["superseded_by"]) if r["superseded_by"] else None
+        nm = meta_of(newer) if newer else {}
+        if newer and id_ in nm.get("merged_from", []):
+            sources, made = nm["merged_from"], [newer["id"]]
+        elif newer and nm.get("split_from") == id_:
+            sources, made = [id_], meta_of(r).get("split_into", [newer["id"]])
+        else:
+            sources, made = [id_], []
+        for m in made:
+            row_ = get(db, m)
+            if row_["status"] in ("active", "proposed"):
+                retire(db, row_, "rejected")
+        back = [f"#{i} ({revive(db, x)})" for i in sources
+                if (x := get(db, i))["status"] not in ("active", "proposed")]
+        print("restored " + ", ".join(back) + (f"; removed {', '.join(f'#{m}' for m in made)}" if made else ""))
+    db.commit()
 
 
 def current(db, id_):
@@ -651,8 +701,8 @@ def cmd_merge(db, a):
     new_id = insert(db, a.text, a.type or first["type"], a.scope or first["scope"], tags,
                     max(r["confidence"] for r in olds), status=status,
                     meta={"merged_from": [r["id"] for r in olds]})
-    db.executemany("UPDATE memories SET status = 'superseded', superseded_by = ? WHERE id = ?",
-                   [(new_id, r["id"]) for r in olds])
+    for r in olds:
+        retire(db, r, "superseded", new_id)
     db.commit()
     print(f"merged {', '.join(f'#{r[0]}' for r in olds)} into #{new_id}"
           + (" (proposed: waiting for the user's review)" if status == "proposed" else ""))
@@ -666,9 +716,7 @@ def cmd_split(db, a):
         raise SystemExit("give at least two texts, one per entry")
     new_ids = [insert(db, t, a.type or old["type"], old["scope"], old["tags"], old["confidence"],
                       status=old["status"], meta={"split_from": old["id"]}) for t in texts]
-    meta = {**json.loads(old["meta"] or "{}"), "split_into": new_ids}
-    db.execute("UPDATE memories SET status = 'superseded', superseded_by = ?, meta = ? WHERE id = ?",
-               (new_ids[0], json.dumps(meta), old["id"]))
+    retire(db, old, "superseded", new_ids[0], split_into=new_ids)
     db.commit()
     print(f"#{old['id']} split into " + ", ".join(f"#{i}" for i in new_ids))
 
@@ -690,8 +738,11 @@ def cmd_similar(db, a):
 def cmd_set_status(status):
     def run(db, a):
         for id_ in a.ids:
-            get(db, id_)
-            db.execute("UPDATE memories SET status = ? WHERE id = ?", (status, id_))
+            r = get(db, id_)
+            if status == "rejected":
+                retire(db, r, status)
+            else:
+                db.execute("UPDATE memories SET status = ? WHERE id = ?", (status, id_))
         db.commit()
         word = {"active": "approved", "rejected": "rejected"}.get(status, status)
         print(f"{word}: " + ", ".join(f"#{i}" for i in a.ids))
@@ -1016,6 +1067,10 @@ def main():
     s.add_argument("texts", nargs="+", metavar="text")
     s.add_argument("-t", "--type", choices=TYPES, help="default: the memory's")
     s.set_defaults(fn=cmd_split)
+
+    s = sub.add_parser("restore", help="undo the supersede, merge, split or reject that replaced memories")
+    s.add_argument("ids", nargs="+", type=int)
+    s.set_defaults(fn=cmd_restore)
 
     s = sub.add_parser("similar", help="groups of memories that look alike (duplicates, overlaps)")
     s.add_argument("-s", "--scope", help="default: this session's scope (compared with global too)")

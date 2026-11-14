@@ -207,7 +207,7 @@ Each memory has `text`, `type`, `scope`, `tags`, `confidence` (0 to 1), `status`
 
 - Types: `fact`, `decision`, `dead_end`, `event`, `todo`, `preference`, `feedback`.
 - Statuses: `active`, `proposed`, `superseded`, `rejected`. Extracted `preference` and `feedback` entries shape how Claude behaves, so they stay `proposed` until you approve them: `mem review` in a terminal (one at a time, single keys), or `/claudysha:memory-review` in a session.
-- One fact per entry: each memory states one thing, says it once, and is still true. Extraction aims for that (below), and `/claudysha:memory-cleanup` fixes what slips through: in a session, Claude goes over one scope (`mem similar` finds the entries that look alike, then it reads the whole list for outdated, contradicting and multi-fact entries) and proposes merges, splits, corrections and removals in batches, applied only with your OK. Replaced entries stay as history.
+- One fact per entry: each memory states one thing, says it once, and is still true. Extraction aims for that (below), and `/claudysha:memory-cleanup` fixes what slips through: in a session, Claude goes over one scope (`mem similar` finds the entries that look alike, then it reads the whole list for outdated, contradicting and multi-fact entries) and fixes it. Changes that lose nothing (duplicates, merges, splits within one scope, never preferences or feedback) it applies directly and lists at the end; the rest (corrections, removals, scope changes) it asks about, one question per kind of change. Replaced entries stay as history, and `mem restore <id>` undoes any change.
 
 ### Scopes
 
@@ -253,6 +253,7 @@ mem similar [-s scope] [-n 30] [--min-score 0.3]   # groups of entries that look
 mem edit <id> [--text ...] [-t ...] [-s ...] [--tags ...] [-c ...]
 mem review [-l]                   # (or the dashboard's Review page) one by one: a approve, r reject, e edit, t type, s skip, u undo (-l: list)
 mem approve <id...>  |  mem reject <id...>   # reject also forgets a wrong entry nothing replaces
+mem restore <id...>              # undo the supersede, merge, split or reject that replaced it
 mem ingest <transcript.jsonl> [--dry-run]
 mem backfill [--project-dir <folder under ~/.claude/projects>]
 mem rescope [--apply]            # file memories under the scope of their session
@@ -299,7 +300,7 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | SessionEnd, PreCompact and Stop: `mem hook` (Stop only every `memory_every_lines` new transcript lines) | long-term store |
 | `claudysha:recall` skill: the `mem` commands for all three parts, in detail, with the rules for using them | long-term store, core memory, backlog |
 | `/claudysha:memory-review` skill: review proposed memories in the chat | long-term store |
-| `claudysha:memory-cleanup` skill: go over a scope's memories for duplicates, overlaps, outdated and multi-fact entries, and fix them with your OK (you start it, or Claude offers it) | long-term store |
+| `claudysha:memory-cleanup` skill: go over a scope's memories for duplicates, overlaps, outdated and multi-fact entries, and fix them: what loses nothing directly, the rest with your OK (you start it, or Claude offers it) | long-term store |
 
 ## 🛣️ Not done yet
 

@@ -47,6 +47,7 @@ One fact per entry: each memory states one thing, with its reason. Two unrelated
 ${CLAUDE_PLUGIN_ROOT}/mem merge <id> <id...> --text "<one entry>"     # entries that repeat each other become one
 ${CLAUDE_PLUGIN_ROOT}/mem split <id> "<first>" "<second>" [...]       # an entry stating several things
 ${CLAUDE_PLUGIN_ROOT}/mem reject <id...>                              # forget a wrong entry nothing replaces
+${CLAUDE_PLUGIN_ROOT}/mem restore <id...>                             # undo the supersede, merge, split or reject that replaced it
 ${CLAUDE_PLUGIN_ROOT}/mem similar [-s scope]                          # groups of entries that look alike
 ```
 

@@ -143,6 +143,34 @@ class TestCleanup(StoreTest):
                          ["The NAS has two disks", "The backups run nightly at 03:00"])
         self.assertEqual({mem.get(self.db, i)["tags"] for i in new}, {"nas"})
 
+    def test_restore_undoes_a_merge_as_a_whole(self):
+        a = self.add("Keep answers short", type_="feedback", status="active")
+        b = self.add("Answers should be short and plain", type_="feedback", status="proposed")
+        self.run_cmd(mem.cmd_merge, ids=[a, b], text="Keep answers short and plain", type=None, scope=None)
+        merged = mem.get(self.db, a)["superseded_by"]
+        out = self.run_cmd(mem.cmd_restore, ids=[b])
+        self.assertIn(f"removed #{merged}", out)
+        self.assertEqual([mem.get(self.db, i)["status"] for i in (a, b, merged)], ["active", "proposed", "rejected"])
+        self.assertIsNone(mem.get(self.db, a)["superseded_by"])
+        self.assertIn("already active", self.run_cmd(mem.cmd_restore, ids=[a]))
+
+    def test_restore_undoes_a_split(self):
+        a = self.add("The NAS has two disks, and the backups run nightly")
+        self.run_cmd(mem.cmd_split, id=a, texts=["The NAS has two disks", "The backups run nightly"], type=None)
+        parts = json.loads(mem.get(self.db, a)["meta"])["split_into"]
+        self.run_cmd(mem.cmd_restore, ids=[a])
+        self.assertEqual(mem.get(self.db, a)["status"], "active")
+        self.assertNotIn("split_into", json.loads(mem.get(self.db, a)["meta"]))
+        self.assertEqual({mem.get(self.db, i)["status"] for i in parts}, {"rejected"})
+
+    def test_restore_undoes_a_duplicate_or_a_reject(self):
+        keep, dup = self.add("The router uses 10.0.0.0/24"), self.add("The LAN is 10.0.0.0/24")
+        gone = self.add("A wrong fact", type_="preference", status="proposed")
+        self.run_cmd(mem.cmd_supersede, id=dup, by=keep, text=None, type=None, scope=None)
+        self.run_cmd(mem.cmd_set_status("rejected"), ids=[gone])
+        self.run_cmd(mem.cmd_restore, ids=[dup, gone])
+        self.assertEqual([mem.get(self.db, i)["status"] for i in (keep, dup, gone)], ["active", "active", "proposed"])
+
     def test_similar_groups_overlaps_but_not_chains(self):
         a = self.add("The media server runs Jellyfin on port 8096")
         b = self.add("Jellyfin on port 8096 is the media server; its library is on the second disk")
