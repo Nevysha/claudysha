@@ -56,6 +56,7 @@ Claude clones it, asks you the few setup questions in the chat, and runs the ins
 ```
 git clone https://github.com/Nevysha/claudysha.git ~/claudysha
 ~/claudysha/install.sh            # asks a few questions, then installs claudysha@nevysha for your user
+~/claudysha/install.sh --dev      # the same, then turns dev mode on (to work on claudysha itself)
 ~/claudysha/install.sh --remove   # uninstalls; your data stays
 ```
 
@@ -78,7 +79,7 @@ Claude Code runs a cached copy of the plugin, made for its version (`version` in
 | `home` | `~/.claudysha` | plugin | the data folder (`CLAUDYSHA_HOME` overrides it) |
 | `user_name` | `the user` | modules | how Claude refers to you |
 | `user_pronouns` | `they/them` | modules | your pronouns |
-| `guard` | `on` | plugin | keep sessions out of the data folder and this file ([guard](#guard)) |
+| `dev_mode` | `off` | plugin | extra commands for sessions working on claudysha itself ([dev mode](#dev-mode)); set with `claudysha dev on/off` |
 | `memory_every_lines` | `300` | memory | extract during a session once this many new transcript lines piled up (`0`: only at compaction and at the end) |
 
 ## 📁 Data folder
@@ -110,9 +111,23 @@ The folder is claudysha's alone: it is its memory, which sessions never open (se
 
 Think of a brain: you can remember things, but you can't open your head to look inside. Sessions work the same way. They reach their memory only through the modules' commands (`mem search`, `mem core ...`, `mem backlog ...`), and what the plugin shows them talks about "long-term memory", "core memory" and "backlog", never about files, folders or how it works. So it makes sense to someone who never looked inside the plugin, and Claude never edits its memory by hand.
 
-A PreToolUse hook (`claudysha guard`) enforces it: it refuses Read, Edit, Write, Grep, Glob and shell commands that touch the data folder or the settings file (so a session can't turn the guard off), and points Claude to the commands. Path tools are checked by resolving their path; shell commands by looking for the folder's path in the text, which stops mistakes rather than someone set on getting in (the rest is a rule in the skill: never work around it). The settings file is free until it exists, so Claude can still write it when installing claudysha for you.
+A PreToolUse hook (`claudysha guard check`) enforces it: it refuses Read, Edit, Write, Grep, Glob and shell commands that touch the data folder or the settings file (so a session can't turn the guard off), and points Claude to the commands. Path tools are checked by resolving their path; shell commands by looking for the folder's path in the text, which stops mistakes rather than someone set on getting in (the rest is a rule in the skill: never work around it). The settings file is free until it exists, so Claude can still write it when installing claudysha for you.
 
-To look inside yourself, use your own terminal; to let sessions in (say, to debug the plugin), set `guard = off`. For diagnostics there are commands: `mem log` (recent extraction runs and errors) and `mem stats`.
+To look inside yourself, use your own terminal. For diagnostics, sessions have commands: `mem log` (recent extraction runs and errors) and `mem stats`. To let a session in, for example to debug the plugin, turn on dev mode.
+
+<a id="dev-mode"></a>
+
+### 🛠️ Dev mode
+
+For working on claudysha itself. While it's on, sessions are told so at start and get dev commands:
+
+```
+claudysha guard off [--minutes 60]   # pause the guard for a while (it comes back on by itself)
+claudysha guard on                   # end the pause
+claudysha guard status
+```
+
+Only you can turn dev mode on: `claudysha dev on` asks you to type `dev`, and only in a real terminal, so a session can't do it (and is told never to try). `./install.sh --dev` does the same right after installing. `claudysha dev off` turns it off and ends any pause; `claudysha dev status` shows it. Without dev mode, `guard off` refuses, and a hand-made pause file does nothing.
 
 ## 🧩 How modules plug in
 

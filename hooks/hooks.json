@@ -65,7 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/claudysha\" guard",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/claudysha\" guard check",
             "timeout": 5
           }
         ]

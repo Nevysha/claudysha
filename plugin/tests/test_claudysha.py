@@ -250,11 +250,66 @@ class TestGuard(HomeTest):
                 self.assertTrue(self.denies("Bash", command=cmd), cmd)
             self.assertTrue(self.denies("Read", file_path="~/.claudysha-test-guard/x"))
 
-    def test_settings_file_free_until_it_exists_and_guard_off(self):
+    def test_settings_file_free_until_it_exists(self):
         self.conf.unlink()
         self.assertFalse(self.denies("Write", file_path=str(self.conf)))
-        self.conf.write_text("guard = off\n")
-        self.assertFalse(self.denies("Read", file_path=str(self.home / "x")))
+
+    def test_pause_needs_dev_mode_and_expires(self):
+        target = str(self.home / "x")
+        with self.assertRaises(SystemExit):
+            claudysha.pause_guard(10)
+        claudysha.guard_pause_path().write_text("2999-01-01T00:00:00")  # written by hand: no effect
+        self.assertTrue(self.denies("Read", file_path=target))
+        claudysha.set_setting("dev_mode", "on")
+        self.assertFalse(self.denies("Read", file_path=target))  # the hand-written pause counts now
+        claudysha.resume_guard()
+        self.assertTrue(self.denies("Read", file_path=target))
+        claudysha.pause_guard(10)
+        self.assertFalse(self.denies("Read", file_path=target))
+        claudysha.guard_pause_path().write_text("2000-01-01T00:00:00")  # expired
+        self.assertTrue(self.denies("Read", file_path=target))
+
+    def test_denial_mentions_dev_commands_only_in_dev_mode(self):
+        event = json.dumps({"tool_name": "Read", "tool_input": {"file_path": str(self.home)}})
+        self.assertNotIn("guard off", claudysha.guard_hook(event))
+        claudysha.set_setting("dev_mode", "on")
+        self.assertIn("guard off", claudysha.guard_hook(event))
+
+
+class TestDevMode(HomeTest):
+    def setUp(self):
+        super().setUp()
+        self.home.mkdir(parents=True)
+        self.conf.parent.mkdir(parents=True)
+        self.conf.write_text("# mine\nuser_name = Alex   # me\n")
+
+    def test_on_needs_the_typed_word(self):
+        with self.assertRaises(SystemExit):
+            claudysha.set_dev_mode(True, confirm=lambda p: "yes", out=self.out.append)
+        self.assertFalse(claudysha.dev_mode())
+        claudysha.set_dev_mode(True, confirm=lambda p: "dev", out=self.out.append)
+        self.assertTrue(claudysha.dev_mode())
+        self.assertEqual(claudysha.read_config()["user_name"], "Alex")
+        self.assertIn("# mine", self.conf.read_text())
+
+    def test_on_refuses_without_a_terminal(self):
+        with mock.patch.object(sys.stdin, "isatty", return_value=False):
+            with self.assertRaises(SystemExit):
+                claudysha.set_dev_mode(True, confirm=claudysha.dev_confirm, out=self.out.append)
+        self.assertFalse(claudysha.dev_mode())
+
+    def test_off_also_ends_a_pause(self):
+        claudysha.set_setting("dev_mode", "on")
+        claudysha.pause_guard(10)
+        claudysha.set_dev_mode(False, out=self.out.append)
+        self.assertFalse(claudysha.dev_mode())
+        self.assertFalse(claudysha.guard_pause_path().exists())
+
+    def test_session_text(self):
+        claudysha.set_setting("dev_mode", "on")
+        text = claudysha.dev_session_text()
+        self.assertIn("guard off", text)
+        self.assertIn("Never turn dev mode on or off yourself", text)
 
     def test_bad_input_lets_the_call_through(self):
         self.assertEqual(claudysha.guard_hook("not json"), "")

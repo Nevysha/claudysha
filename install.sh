@@ -2,6 +2,7 @@
 # Install (or uninstall) the claudysha plugin for the current user.
 # Safe to run again: it skips the steps that are already done.
 #   ./install.sh            install (settings: ~/.config/claudysha/claudysha.conf, created from claudysha.conf.example)
+#   ./install.sh --dev      install, then turn dev mode on (asks you to confirm, see the README)
 #   ./install.sh --remove   uninstall (keeps the home folder)
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"   # claude's native install, also when run from Ansible
@@ -22,6 +23,9 @@ python3 -c 'import sqlite3; sqlite3.connect(":memory:").execute("create virtual 
 # Writes ~/.config/claudysha/claudysha.conf if missing (asks questions in a terminal, defaults
 # otherwise), then creates the home folder.
 "$dir/claudysha" setup
+if [ "${1:-}" = "--dev" ]; then
+    "$dir/claudysha" dev on || true   # not confirmed: install anyway, dev mode stays off
+fi
 
 claude plugin validate "$dir" >/dev/null
 changed=no

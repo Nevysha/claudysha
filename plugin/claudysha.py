@@ -9,7 +9,9 @@
 - setup and init (each module in MODULES creates its own part of the data folder);
 - archive and load of the whole data folder;
 - the guard: a PreToolUse hook that keeps sessions out of the data folder and the settings
-  file, so they only reach their memory through the modules' commands.
+  file, so they only reach their memory through the modules' commands;
+- dev mode, for people working on claudysha itself: only the user turns it on (in a real
+  terminal), and it gives sessions extra commands, like pausing the guard.
 """
 import argparse
 import contextlib
@@ -29,7 +31,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DEFAULT_HOME = "~/.claudysha"
-DEFAULTS = {"home": DEFAULT_HOME, "user_name": "the user", "user_pronouns": "they/them", "guard": "on"}
+DEFAULTS = {"home": DEFAULT_HOME, "user_name": "the user", "user_pronouns": "they/them", "dev_mode": "off"}
+DEV_CONFIRM_WORD = "dev"
+GUARD_PAUSE_MINUTES = 60
 GLOBAL_SCOPE = "global"
 ARCHIVE_FORMAT = 1
 MANIFEST = "claudysha-archive.json"
@@ -65,6 +69,21 @@ def read_config(path=None):
 
 def setting(key):
     return read_config().get(key) or DEFAULTS[key]
+
+
+def set_setting(key, value):
+    """Set `key = value` in the config file, keeping its other lines and comments."""
+    path = config_path()
+    lines = path.read_text().splitlines() if path.is_file() else []
+    for i, line in enumerate(lines):
+        k, sep, _ = line.split("#", 1)[0].partition("=")
+        if sep and k.strip() == key:
+            lines[i] = f"{key} = {value}"
+            break
+    else:
+        lines.append(f"{key} = {value}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
 
 
 def user_name():
@@ -215,6 +234,41 @@ GUARD_REASON = ("That is where claudysha keeps its memory, which sessions never 
                 "Use the memory commands instead (see the claudysha:recall skill).")
 
 
+def dev_mode():
+    return setting("dev_mode").lower() in ("on", "yes", "true", "1")
+
+
+def guard_pause_path():
+    """Outside the data folder (not archived). Writing it by hand does nothing without dev mode."""
+    h = home()
+    return h.parent / f".{h.name.lstrip('.')}.guard-paused-until"
+
+
+def guard_paused_until():
+    """When the guard comes back on, if dev mode is on and the guard is paused; else None."""
+    if not dev_mode():
+        return None
+    try:
+        until = dt.datetime.fromisoformat(guard_pause_path().read_text().strip())
+    except (OSError, ValueError):
+        return None
+    return until if until > dt.datetime.now() else None
+
+
+def pause_guard(minutes):
+    if not dev_mode():
+        raise SystemExit("The guard can only be paused in dev mode, which only the user can turn on "
+                         "(`claudysha dev on`, in their own terminal).")
+    until = dt.datetime.now() + dt.timedelta(minutes=minutes)
+    guard_pause_path().write_text(until.isoformat(timespec="seconds"))
+    return until
+
+
+def resume_guard():
+    with contextlib.suppress(FileNotFoundError):
+        guard_pause_path().unlink()
+
+
 def guarded_paths():
     """The data folder, and the settings file once it exists (install may still create it)."""
     paths = [home()]
@@ -243,7 +297,7 @@ def _spellings(path):
 
 def guard_denies(event):
     """True if this PreToolUse event (the hook JSON) touches a guarded path."""
-    if setting("guard").lower() in ("off", "no", "false", "0"):
+    if guard_paused_until():
         return False
     tool, args = event.get("tool_name", ""), event.get("tool_input") or {}
     cwd = Path(event.get("cwd") or os.getcwd())
@@ -277,8 +331,53 @@ def guard_hook(stdin_text):
             return ""
     except Exception:
         return ""
+    reason = GUARD_REASON
+    if dev_mode():
+        reason += (f" (Dev mode is on: if this work really needs it, `{REPO / 'claudysha'} guard off` "
+                   "pauses the guard; turn it back on with `guard on` when done.)")
     return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                              "permissionDecisionReason": GUARD_REASON}})
+                                              "permissionDecisionReason": reason}})
+
+
+# ---------------------------------------------------------------- dev mode
+
+def set_dev_mode(on, confirm=None, out=print):
+    """Turn dev mode on (only with the user's typed confirmation, see dev_confirm) or off."""
+    if not on:
+        set_setting("dev_mode", "off")
+        resume_guard()
+        out("dev mode off: the guard is on for every session")
+        return
+    if dev_mode():
+        out("dev mode is already on")
+        return
+    out("Dev mode is for working on claudysha itself. It lets Claude sessions pause the guard and\n"
+        "open claudysha's memory files directly. Turn it off with `claudysha dev off`.")
+    if confirm(f"Type '{DEV_CONFIRM_WORD}' to turn it on: ").strip() != DEV_CONFIRM_WORD:
+        raise SystemExit("not confirmed: dev mode stays off")
+    set_setting("dev_mode", "on")
+    out("dev mode on: new sessions get the dev commands")
+
+
+def dev_confirm(prompt):
+    if not sys.stdin.isatty():
+        raise SystemExit("Only the user can turn dev mode on: they run `claudysha dev on` in their own terminal.")
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return ""
+
+
+def dev_session_text():
+    """What sessions are told while dev mode is on."""
+    c = REPO / "claudysha"
+    paused = guard_paused_until()
+    state = f"paused until {paused:%H:%M}" if paused else "on"
+    return (f"[claudysha] Dev mode is on: {user_name()} works on claudysha itself. The guard is {state}. "
+            f"Dev commands: `{c} guard off [--minutes N]` pauses the guard (default {GUARD_PAUSE_MINUTES} min) "
+            f"so you can open claudysha's data folder (`{c} home`) and settings file; `{c} guard on` turns it "
+            "back on. Pause it only when the work needs it, say so, and turn it back on when done. "
+            "Never turn dev mode on or off yourself.")
 
 
 # ---------------------------------------------------------------- archive
@@ -428,7 +527,11 @@ def main():
     s = sub.add_parser("load", help="replace the whole home with an archive (asks for confirmation)")
     s.add_argument("archive")
     sub.add_parser("session-start", help="for the SessionStart hook: make sure the data folder exists")
-    sub.add_parser("guard", help="for the PreToolUse hook: deny tool calls that open the data folder")
+    s = sub.add_parser("guard", help="the guard: check (PreToolUse hook), off/on (dev mode only), status")
+    s.add_argument("action", choices=["check", "off", "on", "status"])
+    s.add_argument("--minutes", type=int, default=GUARD_PAUSE_MINUTES, help="how long `off` lasts")
+    s = sub.add_parser("dev", help="dev mode, for working on claudysha itself (`on` asks you to confirm)")
+    s.add_argument("action", choices=["on", "off", "status"])
     a = p.parse_args()
 
     if a.cmd == "home":
@@ -447,9 +550,23 @@ def main():
     elif a.cmd == "load":
         load(a.archive, tty_confirm)
     elif a.cmd == "guard":
-        out = guard_hook(sys.stdin.read())
-        if out:
-            print(out)
+        if a.action == "check":
+            out = guard_hook(sys.stdin.read())
+            if out:
+                print(out)
+        elif a.action == "off":
+            print(f"guard paused until {pause_guard(a.minutes):%H:%M} (`claudysha guard on` to end it sooner)")
+        elif a.action == "on":
+            resume_guard()
+            print("guard on")
+        else:
+            paused = guard_paused_until()
+            print(f"guard paused until {paused:%H:%M}" if paused else "guard on")
+    elif a.cmd == "dev":
+        if a.action == "status":
+            print(f"dev mode {'on' if dev_mode() else 'off'}")
+        else:
+            set_dev_mode(a.action == "on", dev_confirm)
     elif a.cmd == "session-start":
         if os.environ.get("MEM_NO_HOOK"):
             return
@@ -457,6 +574,8 @@ def main():
             if not sys.stdin.isatty():
                 sys.stdin.read()
         init()  # a plugin installed from GitHub has no install.sh run: create the data folder here
+        if dev_mode():
+            print(dev_session_text())
         if not config_path().exists():
             print(f"[claudysha] No settings file yet ({config_path()}). Suggest once that the user runs "
                   f"`{REPO / 'claudysha'} setup` in a terminal to set their name, pronouns and data folder.")
