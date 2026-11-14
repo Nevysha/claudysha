@@ -604,15 +604,16 @@ def tty_input(prompt):
 
 
 def main():
-    p = argparse.ArgumentParser(prog="claudysha", description="claudysha plugin home: paths, archive, load.")
+    p = argparse.ArgumentParser(prog="claudysha", description="claudysha: settings and folders, archive and "
+                                "load of your data, dev mode, and the guard. Memory commands are in `mem`.")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("home", help="print the plugin's folder (bin/, state/, data/)")
     sub.add_parser("config", help="print the config file path and the settings in effect")
-    sub.add_parser("init", help="create the home folder layout (keeps existing files)")
+    sub.add_parser("init", help="create the folders (keeps existing files)")
     sub.add_parser("setup", help="write the config if missing (asks questions in a terminal), then init")
-    s = sub.add_parser("archive", help="write a .tar.gz of the whole home")
+    s = sub.add_parser("archive", help="write a .tar.gz of your data (data/)")
     s.add_argument("dest", nargs="?", help="file or folder (default: ./claudysha-<date>.tar.gz)")
-    s = sub.add_parser("load", help="replace the whole home with an archive (asks for confirmation)")
+    s = sub.add_parser("load", help="replace your data with an archive (you type erase to confirm)")
     s.add_argument("archive")
     sub.add_parser("session-start", help="for the SessionStart hook: make sure the data folder exists")
     s = sub.add_parser("guard", help="the guard: check (PreToolUse hook), off/on (dev mode only), status")
@@ -620,6 +621,9 @@ def main():
     s.add_argument("--minutes", type=int, default=GUARD_PAUSE_MINUTES, help="how long `off` lasts")
     s = sub.add_parser("dev", help="dev mode, for working on claudysha itself (`on` asks you to confirm)")
     s.add_argument("action", choices=["on", "off", "status"])
+    if len(sys.argv) == 1:
+        p.print_help()
+        return
     a = p.parse_args()
 
     if a.cmd == "home":

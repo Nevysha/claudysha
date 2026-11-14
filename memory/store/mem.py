@@ -899,6 +899,9 @@ def main():
     sub.add_parser("stats", help="counts").set_defaults(fn=cmd_stats)
     sub.add_parser("export", help="dump all memories as JSONL").set_defaults(fn=cmd_export)
 
+    if len(sys.argv) == 1:
+        p.print_help()
+        return
     a = p.parse_args()
     if a.cmd == "ingest" and not a.hook and not a.transcript:
         p.error("ingest needs a transcript path or --hook")
