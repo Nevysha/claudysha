@@ -5,7 +5,7 @@
   folder path and who the user is;
 - the plugin's folder (~/.claudysha by default; CLAUDYSHA_HOME overrides it):
     bin/    the claudysha and mem commands (links to the repo), for the user's PATH
-    state/  runtime state (the guard pause)
+    state/  runtime state (the guard pause, which version each session runs)
     archives/  archives made from the dashboard
     data/   the user's data: every module keeps its part here; archived, restored by load,
             and guarded. Older versions kept it directly in the plugin's folder: init()
@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -129,6 +130,41 @@ def bin_dir():
 
 def state_dir():
     return home() / "state"
+
+
+SESSION_NOTE_DAYS = 14   # how long a session's version note is kept
+
+
+def plugin_version():
+    """The version of the code running now (this copy of the plugin)."""
+    try:
+        return json.loads((REPO / ".claude-plugin" / "plugin.json").read_text()).get("version", "")
+    except (OSError, ValueError):
+        return ""
+
+
+def note_session(stdin_text, prune=False):
+    """Write down which version a session runs (state/sessions/<id>), for the user's status line.
+
+    Called by hooks with their stdin: SessionStart, and the guard on every tool call, so a session
+    that reloaded its plugins shows the new version after its next tool call. Never fails a hook.
+    """
+    with contextlib.suppress(Exception):
+        sid = str(json.loads(stdin_text or "{}").get("session_id") or "")
+        if not re.fullmatch(r"[\w-]{1,128}", sid):
+            return
+        folder = state_dir() / "sessions"
+        note, version = folder / sid, plugin_version() or "?"
+        if not note.exists() or note.read_text() != version:
+            folder.mkdir(parents=True, exist_ok=True)
+            tmp = folder / f".{sid}.tmp"
+            tmp.write_text(version)
+            tmp.replace(note)
+        if prune:
+            cutoff = time.time() - SESSION_NOTE_DAYS * 86400
+            for f in folder.iterdir():
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
 
 
 @contextlib.contextmanager
@@ -655,7 +691,9 @@ def main():
         load(a.archive, tty_confirm)
     elif a.cmd == "guard":
         if a.action == "check":
-            out = guard_hook(sys.stdin.read())
+            text = sys.stdin.read()
+            note_session(text)
+            out = guard_hook(text)
             if out:
                 print(out)
         elif a.action == "off":
@@ -686,10 +724,12 @@ def main():
     elif a.cmd == "session-start":
         if os.environ.get("MEM_NO_HOOK"):
             return
+        text = ""
         with contextlib.suppress(Exception):
             if not sys.stdin.isatty():
-                sys.stdin.read()
+                text = sys.stdin.read()
         init(wait=False)  # a plugin installed from GitHub has no install.sh run: create the folders here
+        note_session(text, prune=True)
         if dev_mode():
             print(dev_session_text())
         if not config_path().exists():

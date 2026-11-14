@@ -209,6 +209,34 @@ class TestArchiveLoad(HomeTest):
                 claudysha.tty_confirm("? ")
 
 
+class TestSessionNote(HomeTest):
+    """Which version each session runs, for the user's status line."""
+
+    def test_hooks_note_the_running_version(self):
+        notes = self.home / "state" / "sessions"
+        env = dict(os.environ, CLAUDYSHA_HOME=str(self.home), CLAUDYSHA_CONFIG=str(self.conf))
+        cli = str(claudysha.REPO / "claudysha")
+        subprocess.run([cli, "session-start"], input=json.dumps({"session_id": "abc-1"}), text=True,
+                       env=env, check=True, capture_output=True)
+        self.assertEqual((notes / "abc-1").read_text(), claudysha.plugin_version())
+        event = {"session_id": "abc-2", "tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": "/"}
+        subprocess.run([cli, "guard", "check"], input=json.dumps(event), text=True, env=env, check=True,
+                       capture_output=True)
+        self.assertTrue((notes / "abc-2").exists())
+
+    def test_bad_input_is_ignored_and_old_notes_pruned(self):
+        claudysha.init()
+        for text in ("not json", "{}", json.dumps({"session_id": "../escape"})):
+            claudysha.note_session(text)
+        notes = self.home / "state" / "sessions"
+        self.assertFalse(notes.exists() and any(notes.iterdir()))
+        self.assertFalse((self.home / "state" / "escape").exists())
+        claudysha.note_session(json.dumps({"session_id": "old"}))
+        os.utime(notes / "old", (0, 0))
+        claudysha.note_session(json.dumps({"session_id": "new"}), prune=True)
+        self.assertEqual(sorted(p.name for p in notes.iterdir()), ["new"])
+
+
 class TestLayout(HomeTest):
     def old_home(self):
         """A data folder as older versions laid it out: the data directly in the plugin's folder."""

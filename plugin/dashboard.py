@@ -423,10 +423,7 @@ def running():
 
 
 def plugin_version():
-    try:
-        return json.loads((claudysha.REPO / ".claude-plugin" / "plugin.json").read_text()).get("version", "")
-    except (OSError, ValueError):
-        return ""
+    return claudysha.plugin_version()
 
 
 def already_running(st, out, open_browser):

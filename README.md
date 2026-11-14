@@ -91,12 +91,15 @@ Everything claudysha keeps lives in one folder, never in the plugin's code:
 ```
 ~/.claudysha/
   bin/          the plugin's: the claudysha and mem commands (links to the repo), for your PATH
-  state/        the plugin's: runtime state (the guard's pause in dev mode)
+  state/        the plugin's: runtime state (the guard's pause in dev mode, the dashboard's link,
+                sessions/<session id>: the claudysha version each session runs, for a status line)
   archives/     archives made from the dashboard
   data/         yours: archived, restored by load, never opened by sessions (see guard)
     brain/      Memory module: core memory and backlog (its own git repo)
     memory/     Memory module: long-term store
 ```
+
+A status line can show which claudysha version the session runs: hooks write it to `state/sessions/<session id>` at session start and on each tool call (so after `/reload-plugins` it follows on the next tool call), and the status line's input has the `session_id`. Notes older than 14 days are removed.
 
 `data/` is claudysha's memory and nothing else: each module owns its part, and sessions only reach it through commands (see [guard](#guard)). Keep your own scripts and backups elsewhere, where sessions can use them.
 
