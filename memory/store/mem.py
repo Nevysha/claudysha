@@ -692,6 +692,21 @@ def rules(db, scope):
             ORDER BY confidence DESC, id DESC""", (scope, *sorted(NEEDS_APPROVAL))).fetchall()
 
 
+def commands_note(user):
+    """The memory commands, so every session knows them from the start (the claudysha:recall
+    skill has the details and the rules). Commands only: never where or how memory is kept."""
+    m = claudysha.REPO / "mem"
+    return (f"\nMemory commands (`mem` is `{m}`; the claudysha:recall skill has the details):\n"
+            "- `mem search <words...> [-s <scope> | -A] [-t <type>]`: several words, exact tokens kept; "
+            "`mem get <id...>` shows entries in full, `mem list [-s <scope>] [-t <type>]` the latest\n"
+            "- `mem add \"<self-contained sentence, with the why>\" -t <type> [-s global]`: types fact, "
+            "decision, dead_end, event, todo, preference, feedback; default scope is this session's\n"
+            "- `mem supersede <id> \"<corrected text>\"`: when a memory turned out wrong or outdated\n"
+            f"- `mem core show|add|edit|remove`: core memory, changed only with {user}'s OK\n"
+            "- `mem backlog list|show|add|update|done`: postponed ideas with a review date\n"
+            "- `mem log`, `mem stats`: recent memory runs and errors, counts per scope")
+
+
 def session_note(db, here):
     """What the SessionStart hook prints for a session in scope `here`."""
     user = claudysha.user_name()
@@ -702,6 +717,7 @@ def session_note(db, here):
            f"This session's scope is `{here}` (the repository, or else the folder, it works in). "
            "Search your memory (claudysha:recall skill) before answering about past work or redoing something: "
            "a search covers this scope and `global` by default."]
+    out.append(commands_note(user))
     for scope, title in ((GLOBAL, f"{user}'s preferences and feedback for every session (global)"),
                          (here, f"{user}'s preferences and feedback for `{here}`")):
         rows = rules(db, scope)

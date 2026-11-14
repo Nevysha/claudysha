@@ -278,6 +278,10 @@ class TestIngest(TranscriptTest):
         self.assertIn("you remember 1 things", out)
         self.assertIn(f"scope is `{here}`", out)
         self.assertNotIn("proposed", out)
+        self.assertIn("Memory commands", out)
+        self.assertIn("mem supersede <id>", out)
+        self.assertIn(str(mem.claudysha.REPO / "mem"), out)
+        self.assertNotIn(str(mem.claudysha.data_dir()), out)  # commands only, never where memory is kept
         self.add("be brief", "feedback", "global", status="proposed")
         self.assertIn("1 proposed", self.session_start(here))
 

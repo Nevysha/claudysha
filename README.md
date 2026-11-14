@@ -288,10 +288,10 @@ At session start, `memory/backlog.py` lists the open or waiting notes whose `rev
 | Piece | Part |
 |---|---|
 | SessionStart: `memory/core.py session-start` | core memory |
-| SessionStart: `mem session-start` (a line saying the store exists, and how many memories wait for review) | long-term store |
+| SessionStart: `mem session-start` (the store's size and this session's scope, a short list of the memory commands, the approved preferences and feedback of `global` and this scope, the other scopes, and how many memories wait for review) | long-term store, core memory, backlog |
 | SessionStart: `memory/backlog.py session-start` | backlog |
 | SessionEnd, PreCompact and Stop: `mem hook` (Stop only every `memory_every_lines` new transcript lines) | long-term store |
-| `claudysha:recall` skill: the `mem` commands for all three parts | long-term store, core memory, backlog |
+| `claudysha:recall` skill: the `mem` commands for all three parts, in detail, with the rules for using them | long-term store, core memory, backlog |
 | `/claudysha:memory-review` skill: review proposed memories in the chat | long-term store |
 
 ## 🛣️ Not done yet
