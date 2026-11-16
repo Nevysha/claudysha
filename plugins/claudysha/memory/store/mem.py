@@ -1186,10 +1186,14 @@ def cmd_session_start(db, a):
     data = data if isinstance(data, dict) else {}
     # The dashboard's session preview names the scope to show (Claude Code never sends this).
     scope = data.get("claudysha_preview_scope")
-    if not (isinstance(scope, str) and scope.strip()):
+    preview = isinstance(scope, str) and scope.strip()
+    if not preview:
         cwd = data.get("cwd")
         scope = claudysha.scope_of(cwd) if cwd else claudysha.current_scope()
-    print(session_note(db, resolve_scope(db, scope.strip())))
+    scope = resolve_scope(db, scope.strip())
+    if not preview:
+        claudysha.note_session_scope(data.get("session_id"), scope)  # for the user's status line
+    print(session_note(db, scope))
 
 
 def cmd_rescope(db, a):

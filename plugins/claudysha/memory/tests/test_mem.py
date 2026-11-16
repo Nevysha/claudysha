@@ -719,6 +719,25 @@ class TestScopeRenameAlias(TranscriptTest):
                                                   type=None, limit=10, all=False, full=False))
         self.assertIn("about the work folder", out.getvalue())
 
+    def test_session_start_notes_the_scope_for_the_status_line(self):
+        folder = Path(self.tmp.name).resolve() / "work"
+        folder.mkdir()
+        self.add("one", scope=str(folder))
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "alias", str(folder), "work"))
+        payload = json.dumps({"session_id": "abc-123", "cwd": str(folder)})
+        with mock.patch.object(sys, "stdin", io.StringIO(payload)), mock.patch.dict("os.environ", {}) as env, \
+                redirect_stdout(io.StringIO()):
+            env.pop("MEM_NO_HOOK", None)
+            mem.cmd_session_start(self.db, None)
+        note = mem.claudysha.state_dir() / "sessions" / "abc-123.scope"
+        self.assertEqual(note.read_text(), "work")
+        preview = json.dumps({"session_id": "prev-1", "claudysha_preview_scope": "other"})
+        with mock.patch.object(sys, "stdin", io.StringIO(preview)), mock.patch.dict("os.environ", {}) as env, \
+                redirect_stdout(io.StringIO()):
+            env.pop("MEM_NO_HOOK", None)
+            mem.cmd_session_start(self.db, None)
+        self.assertFalse((note.parent / "prev-1.scope").exists())
+
     def test_list_and_history(self):
         self.add("one", scope="old")
         self.add("two", scope="new", status="proposed")

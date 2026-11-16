@@ -167,6 +167,20 @@ def note_session(stdin_text, prune=False):
                     f.unlink()
 
 
+def note_session_scope(session_id, scope):
+    """Write down a session's scope (state/sessions/<id>.scope), for the user's status line.
+    Pruned with the version notes. Never fails a hook."""
+    with contextlib.suppress(Exception):
+        sid = str(session_id or "")
+        if not re.fullmatch(r"[\w-]{1,128}", sid) or not scope:
+            return
+        folder = state_dir() / "sessions"
+        folder.mkdir(parents=True, exist_ok=True)
+        tmp = folder / f".{sid}.scope.tmp"
+        tmp.write_text(str(scope))
+        tmp.replace(folder / f"{sid}.scope")
+
+
 @contextlib.contextmanager
 def home_lock(exclusive=False, wait=True):
     """Shared for normal writers (extraction), exclusive for `load` and migrate().
