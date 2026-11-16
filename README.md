@@ -131,6 +131,7 @@ A local web page to look after claudysha without typing commands:
 - **Review** (Memory module): the proposed memories, grouped by scope, with the session each came from and the stored memories that look related. Approve, reject or edit them one at a time or several at once.
 - **Session preview:** what claudysha adds when a session starts, exactly as the session receives it, for a session in any scope you pick or in a folder it has never seen, with an estimate of the tokens each part takes (the plugin's notes, core memory, long-term memory, the backlog, the skill list). It runs the plugin's real session-start hooks, so it can't drift from what sessions get. Below it, **Loaded when used** shows what joins a session later: each skill's full instructions (the recall skill is where sessions learn the memory commands), counted apart from the session start. The estimate is a heuristic, because the standard library has no tokenizer: expect it to be off by about 15%.
 - **Memories** (Memory module): search and filter everything stored (scope, type, status, source, *never used*), and open a memory to see where it came from, what replaced it and what it replaced, then edit, replace or forget it.
+- **Scopes** (Memory module): every scope with its counts and aliases. Rename a scope or make it an alias of another, with a preview of what moves before you apply it, remove an alias, and undo any recent change.
 
 The server is Python's standard library. The page is a React app built on the [@nevysha/ui](https://github.com/Nevysha/design-system) design system; it comes already built (`plugins/claudysha/plugin/web/`), so you need nothing but Python, and it loads nothing from the internet (the font is bundled). It follows your system's light or dark setting. Only your machine can reach it: the server listens on `127.0.0.1` only (WSL forwards it to the Windows browser) and every request needs the random key in the link it prints, which changes at each start (while it runs, the link is also kept in `state/`, readable only by you, so `status` can show it again; starting it again while an older version runs says so). It also refuses requests that name another host, which stops other websites from reaching it through your browser.
 
@@ -221,6 +222,8 @@ A memory belongs to a scope: where it applies.
 
 At session start, each session gets the approved preferences and feedback of `global` and of its own scope (up to 15 each), plus the list of the other scopes. It can search them when useful (`mem search -s <scope>` or `-A`), but is told to use what it finds there as information about that place, never as rules for this one. Facts, decisions and the rest are searched, not loaded. Extraction files each memory under the session's scope or `global`, nothing else.
 
+**Renames and aliases.** `mem scope rename <old> <new>` moves every memory of a scope (any status) to a new name, joining that scope if it exists. A session is still detected under the old name, so the old name stays as an alias of the new one unless you pass `--no-alias` (for a name that won't come back, like a repository renamed on GitHub). `mem scope alias <name> <scope>` makes sessions detected as `<name>` (a second clone under another folder name, a folder you worked in before it became a repository) use `<scope>`, and moves `<name>`'s memories there. Aliases are followed everywhere a scope is read: the session's scope, extraction, and `-s` options. Both show what would move and change until you add `--apply`. Each change is recorded with the memories it moved: `mem scope history` lists them and `mem scope undo <id> --apply` moves them back (all but those moved again since) and restores the aliases. `mem scope unalias <name>` stops an alias; the memories already moved stay where they are. `global` can't be renamed or aliased.
+
 Stores made before scopes (with a free-form `project` label) are migrated on first use: the column is renamed and `general` becomes `global`. `mem rescope` then shows how the other memories would move to the scope of the session they came from, and `mem rescope --apply` moves them.
 
 ### Why SQLite
@@ -260,6 +263,10 @@ mem restore <id...>              # undo the supersede, merge, split or reject th
 mem ingest <transcript.jsonl> [--dry-run]
 mem backfill [--project-dir <folder under ~/.claude/projects>]
 mem rescope [--apply]            # file memories under the scope of their session
+mem scope list                   # every scope with its counts and aliases (or the dashboard's Scopes page)
+mem scope rename <old> <new> [--no-alias] [--apply]   # move a scope's memories; the old name stays as an alias
+mem scope alias <name> <scope> [--apply]   # sessions detected as <name> use <scope>; its memories move there
+mem scope unalias <name>  |  mem scope history  |  mem scope undo <id> [--apply]
 mem stats  |  mem log  |  mem export   # counts, recent extraction runs, JSONL dump
 
 mem core show | add "<line>" [--section ...] | edit --old ... --new ... | remove "<text>"

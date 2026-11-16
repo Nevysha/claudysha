@@ -27,3 +27,19 @@ export type Summary = {
 export type Proposed = Memory & { source_label: string; related: Memory[] };
 export type Detail = { item: Memory & { source_label: string }; superseded_by: Memory | null; supersedes: Memory[]; related: Memory[] };
 export type Listing = { items: Memory[]; total: number; ranked: boolean };
+
+export type ScopeRow = { scope: string; active: number; proposed: number; total: number; aliases: string[] };
+export type ScopeChange = {
+  id: number;
+  at: string;
+  kind: "rename" | "alias" | "unalias";
+  old: string;
+  new: string;
+  memory_ids: number[];
+  aliases: [string, string | null, string | null][];
+  undone_at: string | null;
+  label: string;
+};
+export type Scopes = { scopes: ScopeRow[]; global: string; history: ScopeChange[] };
+export type ScopeRequest = { kind: "rename" | "alias" | "unalias"; old: string; new?: string; alias?: boolean };
+export type ScopePlan = { kind: ScopeRequest["kind"]; old: string; new: string; count: number; aliases: [string, string | null, string | null][] };

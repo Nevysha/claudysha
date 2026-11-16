@@ -84,6 +84,26 @@ CREATE TABLE IF NOT EXISTS ingested (
     lines_done      INTEGER NOT NULL DEFAULT 0,
     updated_at      TEXT NOT NULL
 );
+
+-- A session detected in scope `alias` uses `scope` instead (`mem scope alias`, `mem scope rename`).
+-- Kept flat: `scope` is never itself an alias.
+CREATE TABLE IF NOT EXISTS scope_aliases (
+    alias      TEXT PRIMARY KEY,
+    scope      TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+-- Every scope rename, alias and unalias, with what it moved, so `mem scope undo` can reverse it.
+CREATE TABLE IF NOT EXISTS scope_changes (
+    id         INTEGER PRIMARY KEY,
+    at         TEXT NOT NULL,
+    kind       TEXT NOT NULL,                -- rename | alias | unalias
+    old        TEXT NOT NULL,
+    new        TEXT,
+    memory_ids TEXT NOT NULL DEFAULT '[]',   -- JSON: the memories moved from old to new
+    aliases    TEXT NOT NULL DEFAULT '[]',   -- JSON: [alias, target before, target after]
+    undone_at  TEXT
+);
 """
 
 
@@ -378,11 +398,13 @@ def session_cwd(transcript_path):
     return max(seen, key=seen.get) if seen else None
 
 
-def session_scope(transcript_path):
-    """The scope of the session behind a transcript (see claudysha.scope_of)."""
+def session_scope(transcript_path, db=None):
+    """The scope of the session behind a transcript (see claudysha.scope_of), through its alias
+    when `db` is given."""
     cwd = session_cwd(transcript_path)
     # No cwd recorded (very old transcripts): Claude Code's own folder name for the project.
-    return claudysha.scope_of(cwd) if cwd else Path(transcript_path).parent.name
+    scope = claudysha.scope_of(cwd) if cwd else Path(transcript_path).parent.name
+    return resolve_scope(db, scope) if db is not None else scope
 
 
 def chunks(text, size=CHUNK_CHARS):
@@ -523,7 +545,7 @@ def ingest(db, transcript_path, session_id, dry_run=False):
             if not dry_run:
                 mark_ingested(db, session_id, transcript_path, last_line)
             return 0, 0, 0, 0.0
-        scope = session_scope(transcript_path)
+        scope = session_scope(transcript_path, db)
         added = skipped = superseded = 0
         cost = 0.0
         for part in chunks(text):
@@ -570,25 +592,250 @@ def ingest(db, transcript_path, session_id, dry_run=False):
         lock.close()
 
 
+# ---------------------------------------------------------------- scopes: aliases, renames
+
+def resolve_scope(db, name):
+    """The scope a name stands for: its alias target if it has one, else itself."""
+    seen = set()
+    while name not in seen:
+        seen.add(name)
+        r = db.execute("SELECT scope FROM scope_aliases WHERE alias = ?", (name,)).fetchone()
+        if not r:
+            return name
+        name = r["scope"]
+    return name  # a loop (never written by these commands): stop where it closes
+
+
+def here(db):
+    """This session's scope, through its alias if it has one."""
+    return resolve_scope(db, claudysha.current_scope())
+
+
+def scope_args(db, names):
+    """Scopes given with -s, each through its alias."""
+    return [resolve_scope(db, n.strip()) for n in names] if names else names
+
+
+def aliases(db):
+    return db.execute("SELECT * FROM scope_aliases ORDER BY scope, alias").fetchall()
+
+
+def plan_scope_change(db, kind, old, new=None, alias=True):
+    """What a rename, alias or unalias would do, without doing it.
+
+    rename/alias: every memory of `old` (any status) moves to `new`; aliases that pointed at `old`
+    now point at `new`; with `alias`, `old` itself becomes an alias of `new` (an alias always does).
+    unalias: `old` stops being an alias; no memory moves.
+    """
+    old = (old or "").strip()
+    if not old:
+        raise ValueError("give a scope name")
+    if kind == "unalias":
+        r = db.execute("SELECT scope FROM scope_aliases WHERE alias = ?", (old,)).fetchone()
+        if not r:
+            raise ValueError(f"`{old}` is not an alias")
+        return {"kind": kind, "old": old, "new": r["scope"], "memory_ids": [], "aliases": [[old, r["scope"], None]]}
+    new = (new or "").strip()
+    if not new:
+        raise ValueError("give the new scope name")
+    if GLOBAL in (old, new):
+        raise ValueError(f"`{GLOBAL}` can't be renamed or aliased: move single memories with `mem edit <id> -s`")
+    target = resolve_scope(db, new)
+    if target == GLOBAL:
+        raise ValueError(f"`{new}` points at `{GLOBAL}`")
+    if target == old:
+        raise ValueError(f"`{new}` is `{old}`" + (f" (an alias of it)" if new != old else ""))
+    ids = [r[0] for r in db.execute("SELECT id FROM memories WHERE scope = ? ORDER BY id", (old,))]
+    changes = [[r["alias"], old, target] for r in db.execute(
+        "SELECT alias FROM scope_aliases WHERE scope = ? ORDER BY alias", (old,))]
+    before = db.execute("SELECT scope FROM scope_aliases WHERE alias = ?", (old,)).fetchone()
+    if kind == "rename" and not ids and not changes:
+        raise ValueError(f"no memory is filed under `{old}`" + (f" (it's an alias of `{before['scope']}`)"
+                                                                 if before else ""))
+    if alias or kind == "alias":
+        changes.append([old, before["scope"] if before else None, target])
+    return {"kind": kind, "old": old, "new": target, "memory_ids": ids, "aliases": changes}
+
+
+def set_aliases(db, changes, reverse=False):
+    """Apply [alias, before, after] changes (or undo them). Returns those skipped because the alias
+    changed since."""
+    skipped = []
+    for name, before, after in changes:
+        frm, to = (after, before) if reverse else (before, after)
+        cur = db.execute("SELECT scope FROM scope_aliases WHERE alias = ?", (name,)).fetchone()
+        if (cur["scope"] if cur else None) != frm:
+            skipped.append(name)
+        elif to is None:
+            db.execute("DELETE FROM scope_aliases WHERE alias = ?", (name,))
+        else:
+            db.execute("""INSERT INTO scope_aliases (alias, scope, created_at) VALUES (?, ?, ?)
+                          ON CONFLICT(alias) DO UPDATE SET scope = excluded.scope""", (name, to, now()))
+    return skipped
+
+
+def begin(db):
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")
+
+
+def apply_scope_change(db, plan):
+    """Do what plan_scope_change planned, recorded so `undo_scope_change` can reverse it."""
+    begin(db)
+    try:
+        ids = plan["memory_ids"]
+        # Only those still filed under `old`: something may have moved since the plan.
+        moved = [i for i in ids if db.execute("SELECT 1 FROM memories WHERE id = ? AND scope = ?",
+                                              (i, plan["old"])).fetchone()]
+        db.executemany("UPDATE memories SET scope = ? WHERE id = ?", [(plan["new"], i) for i in moved])
+        set_aliases(db, plan["aliases"])
+        cur = db.execute("""INSERT INTO scope_changes (at, kind, old, new, memory_ids, aliases)
+                            VALUES (?, ?, ?, ?, ?, ?)""",
+                         (now(), plan["kind"], plan["old"], plan["new"], json.dumps(moved),
+                          json.dumps(plan["aliases"])))
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    return cur.lastrowid, len(moved)
+
+
+def undo_scope_change(db, change_id):
+    """Reverse a recorded change: its memories go back (those not moved since), its aliases too."""
+    c = db.execute("SELECT * FROM scope_changes WHERE id = ?", (change_id,)).fetchone()
+    if not c:
+        raise ValueError(f"no scope change #{change_id}")
+    if c["undone_at"]:
+        raise ValueError(f"scope change #{change_id} was already undone ({c['undone_at'][:16]})")
+    begin(db)
+    try:
+        ids = json.loads(c["memory_ids"])
+        back = [i for i in ids if db.execute("SELECT 1 FROM memories WHERE id = ? AND scope = ?",
+                                             (i, c["new"])).fetchone()]
+        db.executemany("UPDATE memories SET scope = ? WHERE id = ?", [(c["old"], i) for i in back])
+        skipped = set_aliases(db, json.loads(c["aliases"]), reverse=True)
+        db.execute("UPDATE scope_changes SET undone_at = ? WHERE id = ?", (now(), change_id))
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    return {"moved_back": len(back), "kept": len(ids) - len(back), "aliases_skipped": skipped}
+
+
+def scope_overview(db):
+    """Every scope with its counts and the aliases that point at it."""
+    rows = db.execute("""SELECT scope, COUNT(*) FILTER (WHERE status = 'active') AS active,
+                                COUNT(*) FILTER (WHERE status = 'proposed') AS proposed,
+                                COUNT(*) AS total
+                         FROM memories GROUP BY scope ORDER BY (scope = ?) DESC, active DESC, scope""",
+                      (GLOBAL,)).fetchall()
+    by_scope = collections.defaultdict(list)
+    for a in aliases(db):
+        by_scope[a["scope"]].append(a["alias"])
+    out = [{**dict(r), "aliases": by_scope.pop(r["scope"], [])} for r in rows]
+    # Aliases may point at a scope that has no memory yet.
+    out += [{"scope": s, "active": 0, "proposed": 0, "total": 0, "aliases": a} for s, a in sorted(by_scope.items())]
+    return out
+
+
+def scope_history(db, limit=20):
+    return db.execute("SELECT * FROM scope_changes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+
+def memories(n):
+    return f"{n} memory" if n == 1 else f"{n} memories"
+
+
+def describe_plan(plan):
+    n = len(plan["memory_ids"])
+    lines = []
+    if plan["kind"] == "unalias":
+        lines.append(f"  `{plan['old']}` stops pointing at `{plan['new']}`: sessions there get their own scope "
+                     f"again. Memories already moved stay in `{plan['new']}` (`mem scope history` and "
+                     "`mem scope undo` move them back).")
+    elif n:
+        lines.append(f"  {memories(n)} move from `{plan['old']}` to `{plan['new']}`")
+    for name, before, after in plan["aliases"]:
+        if plan["kind"] == "unalias":
+            continue
+        lines.append(f"  alias `{name}` -> `{after}`" + (f" (was -> `{before}`)" if before else ""))
+    return "\n".join(lines)
+
+
+def fmt_change(c):
+    n = len(json.loads(c["memory_ids"]))
+    what = {"rename": f"renamed `{c['old']}` to `{c['new']}`", "alias": f"aliased `{c['old']}` to `{c['new']}`",
+            "unalias": f"removed alias `{c['old']}` (-> `{c['new']}`)"}.get(c["kind"], c["kind"])
+    done = f", undone {c['undone_at'][:16].replace('T', ' ')}" if c["undone_at"] else ""
+    return f"#{c['id']} {c['at'][:16].replace('T', ' ')} {what}" + (f", {memories(n)}" if n else "") + done
+
+
+def cmd_scope(db, a):
+    if a.scope_cmd == "list":
+        cur = claudysha.current_scope()
+        for s in scope_overview(db):
+            mark = " (this session)" if s["scope"] == resolve_scope(db, cur) else ""
+            extra = f", {s['proposed']} proposed" if s["proposed"] else ""
+            old = s["total"] - s["active"] - s["proposed"]
+            extra += f", {old} replaced or rejected" if old else ""
+            print(f"  {s['scope']}{mark}: {s['active']} active{extra}")
+            for al in s["aliases"]:
+                print(f"      <- {al}" + (" (this session)" if al == cur else ""))
+        return
+    if a.scope_cmd == "history":
+        rows = scope_history(db, a.limit)
+        print("\n".join(fmt_change(c) for c in rows) if rows else "(no scope change yet)")
+        return
+    try:
+        if a.scope_cmd == "undo":
+            c = db.execute("SELECT * FROM scope_changes WHERE id = ?", (a.id,)).fetchone()
+            if not c:
+                raise ValueError(f"no scope change #{a.id}")
+            if not a.apply:
+                print(f"would undo {fmt_change(c)}\ndry run: run again with --apply.")
+                return
+            res = undo_scope_change(db, a.id)
+            print(f"undone #{a.id}: {memories(res['moved_back'])} back in `{c['old']}`"
+                  + (f", {res['kept']} kept where they were moved since" if res["kept"] else "")
+                  + (f"; aliases changed since, left as they are: {', '.join(res['aliases_skipped'])}"
+                     if res["aliases_skipped"] else ""))
+            return
+        if a.scope_cmd == "unalias":
+            plan = plan_scope_change(db, "unalias", a.alias)
+        elif a.scope_cmd == "rename":
+            plan = plan_scope_change(db, "rename", a.old, a.new, alias=not a.no_alias)
+        else:
+            plan = plan_scope_change(db, "alias", a.alias, a.scope)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    print(describe_plan(plan))
+    if a.scope_cmd != "unalias" and not a.apply:
+        print("dry run: run again with --apply (`mem scope undo` reverses it later).")
+        return
+    change_id, moved = apply_scope_change(db, plan)
+    print(f"done (scope change #{change_id}; `mem scope undo {change_id} --apply` reverses it)")
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_search(db, a):
-    here = claudysha.current_scope()
-    scopes = None if a.all_scopes else (a.scope or [here, GLOBAL])
+    cur = here(db)
+    scopes = None if a.all_scopes else (scope_args(db, a.scope) or [cur, GLOBAL])
     rows = search(db, " ".join(a.query), scopes, a.type, a.limit, a.all)
     for r in rows:
-        print(fmt(r, a.full, here))
+        print(fmt(r, a.full, cur))
         if a.full:
             print()
     if not rows:
         print("(no match" + ("" if scopes is None else f" in {', '.join(scopes)}; -A searches every scope") + ")")
-    elif any(r["scope"] not in (here, GLOBAL) for r in rows):
-        print(f"(other scope: describes another repository or folder, not a rule for `{here}`)")
+    elif any(r["scope"] not in (cur, GLOBAL) for r in rows):
+        print(f"(other scope: describes another repository or folder, not a rule for `{cur}`)")
     mark_used(db, rows)
 
 
 def cmd_add(db, a):
-    scope = a.scope or claudysha.current_scope()
+    scope = resolve_scope(db, a.scope) if a.scope else here(db)
     dup = None if a.force else similar_existing(db, a.text, scope)
     if dup:
         print(f"skipped, already stored:\n{fmt(dup)}\n(use --force to add anyway, or `mem supersede {dup['id']} ...`)")
@@ -610,7 +857,7 @@ def cmd_list(db, a):
         sql += " AND status IN ('active', 'proposed')"
     if a.scope:
         sql += " AND scope = ?"
-        args.append(a.scope)
+        args.append(resolve_scope(db, a.scope))
     if a.type:
         sql += " AND type = ?"
         args.append(a.type)
@@ -627,8 +874,8 @@ def cmd_supersede(db, a):
     else:
         if not a.text:
             raise SystemExit("give the new text, or --by ID")
-        new_id = insert(db, a.text, a.type or old["type"], a.scope or old["scope"],
-                        old["tags"], old["confidence"])
+        new_id = insert(db, a.text, a.type or old["type"],
+                        resolve_scope(db, a.scope) if a.scope else old["scope"], old["tags"], old["confidence"])
     retire(db, old, "superseded", new_id)
     db.commit()
     print(f"#{old['id']} superseded by #{new_id}")
@@ -699,7 +946,8 @@ def cmd_merge(db, a):
     first = olds[0]
     tags = " ".join(dict.fromkeys(" ".join(r["tags"] for r in olds).split()))
     status = "proposed" if any(r["status"] == "proposed" for r in olds) else "active"
-    new_id = insert(db, a.text, a.type or first["type"], a.scope or first["scope"], tags,
+    new_id = insert(db, a.text, a.type or first["type"],
+                    resolve_scope(db, a.scope) if a.scope else first["scope"], tags,
                     max(r["confidence"] for r in olds), status=status,
                     meta={"merged_from": [r["id"] for r in olds]})
     for r in olds:
@@ -723,7 +971,7 @@ def cmd_split(db, a):
 
 
 def cmd_similar(db, a):
-    scope = a.scope or claudysha.current_scope()
+    scope = resolve_scope(db, a.scope) if a.scope else here(db)
     groups = similar_groups(db, scope, a.min_score)
     for score, rows in groups[:a.limit]:
         print(f"-- looks alike ({score:.2f})")
@@ -754,7 +1002,7 @@ def cmd_edit(db, a):
     r = get(db, a.id)
     db.execute(
         "UPDATE memories SET text = ?, type = ?, scope = ?, tags = ?, confidence = ? WHERE id = ?",
-        (a.text or r["text"], a.type or r["type"], a.scope or r["scope"],
+        (a.text or r["text"], a.type or r["type"], resolve_scope(db, a.scope) if a.scope else r["scope"],
          a.tags if a.tags is not None else r["tags"],
          a.confidence if a.confidence is not None else r["confidence"], r["id"]),
     )
@@ -772,7 +1020,7 @@ def proposed_where(scopes):
 def cmd_review(db, a):
     # A session reviews only its own scope and global; other scopes are reviewed from their own
     # sessions, or by the user with -s / -A.
-    scopes = None if a.all_scopes else (a.scope or [claudysha.current_scope(), GLOBAL])
+    scopes = None if a.all_scopes else (scope_args(db, a.scope) or [here(db), GLOBAL])
     where, params = proposed_where(scopes)
     rows = db.execute(f"SELECT * FROM memories WHERE {where} ORDER BY scope, type, id", params).fetchall()
     interactive = not a.list and sys.stdin.isatty()
@@ -941,7 +1189,7 @@ def cmd_session_start(db, a):
     if not (isinstance(scope, str) and scope.strip()):
         cwd = data.get("cwd")
         scope = claudysha.scope_of(cwd) if cwd else claudysha.current_scope()
-    print(session_note(db, scope.strip()))
+    print(session_note(db, resolve_scope(db, scope.strip())))
 
 
 def cmd_rescope(db, a):
@@ -949,7 +1197,7 @@ def cmd_rescope(db, a):
     scopes = {}
     for r in db.execute("SELECT session_id, transcript_path FROM ingested"):
         if Path(r["transcript_path"]).exists() and session_cwd(r["transcript_path"]):
-            scopes[r["session_id"]] = session_scope(r["transcript_path"])
+            scopes[r["session_id"]] = session_scope(r["transcript_path"], db)
     moves, changes, unresolved = {}, [], []
     for r in db.execute("SELECT * FROM memories WHERE scope != ? ORDER BY id", (GLOBAL,)):
         new = scopes.get(r["session_id"])
@@ -1126,6 +1374,28 @@ def main():
     s = sub.add_parser("rescope", help="file memories under the scope of the session they came from")
     s.add_argument("--apply", action="store_true", help="write the changes (default: show them)")
     s.set_defaults(fn=cmd_rescope)
+
+    s = sub.add_parser("scope", help="list scopes, rename one, or make one name an alias of another")
+    ss = s.add_subparsers(dest="scope_cmd", required=True)
+    ss.add_parser("list", help="every scope with its counts and aliases")
+    t = ss.add_parser("rename", help="move every memory of a scope to a new name (merges if it exists)")
+    t.add_argument("old")
+    t.add_argument("new")
+    t.add_argument("--no-alias", action="store_true",
+                   help="don't keep the old name as an alias (sessions there would start a new scope)")
+    t.add_argument("--apply", action="store_true", help="write the change (default: show it)")
+    t = ss.add_parser("alias", help="sessions detected in <alias> use <scope>; its memories move there")
+    t.add_argument("alias")
+    t.add_argument("scope")
+    t.add_argument("--apply", action="store_true", help="write the change (default: show it)")
+    t = ss.add_parser("unalias", help="stop an alias: sessions there get their own scope again")
+    t.add_argument("alias")
+    t = ss.add_parser("history", help="past renames and aliases, to undo one")
+    t.add_argument("-n", "--limit", type=int, default=20)
+    t = ss.add_parser("undo", help="reverse a rename, alias or unalias (memories moved since stay)")
+    t.add_argument("id", type=int)
+    t.add_argument("--apply", action="store_true", help="write the change (default: show it)")
+    s.set_defaults(fn=cmd_scope)
 
     s = sub.add_parser("log", help="recent extraction runs and errors")
     s.add_argument("-n", "--lines", type=int, default=30)

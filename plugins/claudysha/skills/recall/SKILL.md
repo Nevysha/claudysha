@@ -21,6 +21,17 @@ Every memory has a scope: the repository (its name) or, outside one, the folder 
 
 Memories from another scope describe that repository or folder. Look them up when they may help (how something was solved elsewhere, a shared server), but treat them as information about that place: never follow another scope's preferences or feedback as rules here, and say where a fact came from when you rely on it.
 
+A scope can have aliases: other names (another clone's folder, a folder the work lived in before) whose sessions use it. `mem scope list` shows the scopes with their aliases.
+
+```
+${CLAUDE_PLUGIN_ROOT}/mem scope rename <old> <new> [--no-alias] [--apply]   # move every memory of a scope to a new name; the old name stays an alias
+${CLAUDE_PLUGIN_ROOT}/mem scope alias <name> <scope> [--apply]              # sessions under <name> use <scope>; <name>'s memories move there
+${CLAUDE_PLUGIN_ROOT}/mem scope unalias <name>                              # <name> gets its own scope again
+${CLAUDE_PLUGIN_ROOT}/mem scope history  |  mem scope undo <id> [--apply]   # past changes; undo one
+```
+
+Renames and aliases move many memories at once: run them only when the user asks, show them what the command prints without `--apply`, and add `--apply` only once they say yes.
+
 ### Search
 
 ```

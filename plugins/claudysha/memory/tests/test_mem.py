@@ -1,4 +1,5 @@
 """Tests for mem.py. Run with: python3 -m unittest discover -s memory/tests"""
+import contextlib
 import io
 import json
 import re
@@ -602,6 +603,132 @@ class TestScopes(TranscriptTest):
             mem.cmd_ingest(self.db, args)
             mem.cmd_hook(self.db, args)
         ingest.assert_not_called()
+
+
+class TestScopeRenameAlias(TranscriptTest):
+    def run_scope(self, *argv):
+        with mock.patch.object(sys, "argv", ["mem", "scope", *argv]), \
+                mock.patch.object(mem, "connect", return_value=self.db), \
+                mock.patch.object(mem.contextlib, "closing", contextlib.nullcontext), \
+                redirect_stdout(io.StringIO()) as out:
+            mem.main()
+        return out.getvalue()
+
+    def scopes(self, *ids):
+        return [mem.get(self.db, i)["scope"] for i in ids]
+
+    def test_rename_is_a_dry_run_until_apply(self):
+        a = self.add("a fact", scope="/srv/notes")
+        out = self.run_scope("rename", "/srv/notes", "notes")
+        self.assertIn("1 memory move", out)
+        self.assertIn("dry run", out)
+        self.assertEqual(self.scopes(a), ["/srv/notes"])
+        self.run_scope("rename", "/srv/notes", "notes", "--apply")
+        self.assertEqual(self.scopes(a), ["notes"])
+
+    def test_rename_moves_every_status_and_keeps_the_old_name_as_an_alias(self):
+        a = self.add("a fact", scope="old")
+        b = self.add("be brief", "feedback", "old", status="proposed")
+        c = self.add("outdated", scope="old", status="superseded")
+        other = self.add("elsewhere", scope="homelab")
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "rename", "old", "new"))
+        self.assertEqual(self.scopes(a, b, c, other), ["new", "new", "new", "homelab"])
+        self.assertEqual(mem.resolve_scope(self.db, "old"), "new")
+        self.assertEqual(mem.resolve_scope(self.db, "homelab"), "homelab")
+
+    def test_rename_without_alias(self):
+        self.add("a fact", scope="old")
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "rename", "old", "new", alias=False))
+        self.assertEqual(mem.resolve_scope(self.db, "old"), "old")
+
+    def test_rename_into_an_existing_scope_merges(self):
+        a, b = self.add("one", scope="old"), self.add("two", scope="new")
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "rename", "old", "new"))
+        self.assertEqual(self.scopes(a, b), ["new", "new"])
+
+    def test_aliases_stay_flat(self):
+        self.add("one", scope="a")
+        self.add("two", scope="b")
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "alias", "a", "b"))
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "rename", "b", "c"))
+        rows = {r["alias"]: r["scope"] for r in mem.aliases(self.db)}
+        self.assertEqual(rows, {"a": "c", "b": "c"})
+        # Aliasing to an alias lands on its target.
+        self.add("three", scope="d")
+        plan = mem.plan_scope_change(self.db, "alias", "d", "a")
+        self.assertEqual(plan["new"], "c")
+
+    def test_refused_changes(self):
+        self.add("one", scope="a")
+        self.add("two", scope="b")
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "alias", "a", "b"))
+        for args in (("rename", "global", "x"), ("rename", "b", "global"), ("alias", "b", "a"),
+                     ("rename", "b", "b"), ("rename", "nothing-here", "x"), ("unalias", "b"),
+                     ("rename", "", "x")):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                mem.plan_scope_change(self.db, *args)
+
+    def test_undo_moves_back_only_what_was_not_moved_since(self):
+        a, b = self.add("one", scope="old"), self.add("two", scope="old")
+        change, moved = mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "alias", "old", "new"))
+        self.assertEqual(moved, 2)
+        self.db.execute("UPDATE memories SET scope = 'elsewhere' WHERE id = ?", (b,))
+        res = mem.undo_scope_change(self.db, change)
+        self.assertEqual((res["moved_back"], res["kept"]), (1, 1))
+        self.assertEqual(self.scopes(a, b), ["old", "elsewhere"])
+        self.assertEqual(mem.resolve_scope(self.db, "old"), "old")  # alias gone
+        with self.assertRaises(ValueError):
+            mem.undo_scope_change(self.db, change)  # once only
+
+    def test_undo_leaves_an_alias_changed_since(self):
+        self.add("one", scope="old")
+        self.add("two", scope="x")
+        first, _ = mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "alias", "old", "new"))
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "rename", "new", "x"))
+        res = mem.undo_scope_change(self.db, first)
+        self.assertEqual(res["aliases_skipped"], ["old"])
+        self.assertEqual(mem.resolve_scope(self.db, "old"), "x")
+
+    def test_unalias_is_recorded_and_undoable(self):
+        a = self.add("one", scope="old")
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "alias", "old", "new"))
+        out = self.run_scope("unalias", "old")
+        self.assertIn("stay in `new`", out)
+        self.assertEqual(mem.resolve_scope(self.db, "old"), "old")
+        self.assertEqual(self.scopes(a), ["new"])
+        change = mem.scope_history(self.db)[0]
+        self.assertEqual(change["kind"], "unalias")
+        mem.undo_scope_change(self.db, change["id"])
+        self.assertEqual(mem.resolve_scope(self.db, "old"), "new")
+
+    def test_sessions_and_scope_options_follow_aliases(self):
+        folder = Path(self.tmp.name).resolve() / "work"
+        folder.mkdir()
+        self.add("about the work folder", scope="work")
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "rename", "work", "renamed"))
+        mem.insert(self.db, "a fact here", "fact", str(folder))
+        mem.apply_scope_change(self.db, mem.plan_scope_change(self.db, "alias", str(folder), "renamed"))
+        path = self.write_transcript([{"type": "user", "cwd": str(folder), "message": {"content": "hi"}}])
+        self.assertEqual(mem.session_scope(path, self.db), "renamed")
+        self.assertEqual(mem.session_scope(path), str(folder))  # without the store: the detected one
+        with mock.patch.dict("os.environ", {"CLAUDE_PROJECT_DIR": str(folder)}):
+            self.assertEqual(mem.here(self.db), "renamed")
+            self.assertIn("This session's scope is `renamed`", mem.session_note(self.db, mem.here(self.db)))
+            with redirect_stdout(io.StringIO()) as out:
+                mem.cmd_search(self.db, mock.Mock(query=["work"], scope=["work"], all_scopes=False,
+                                                  type=None, limit=10, all=False, full=False))
+        self.assertIn("about the work folder", out.getvalue())
+
+    def test_list_and_history(self):
+        self.add("one", scope="old")
+        self.add("two", scope="new", status="proposed")
+        self.run_scope("alias", "old", "new", "--apply")
+        out = self.run_scope("list")
+        self.assertIn("new: 1 active, 1 proposed", out)
+        self.assertIn("<- old", out)
+        self.assertIn("aliased `old` to `new`, 1 memory", self.run_scope("history"))
+        self.assertIn("would undo", self.run_scope("undo", "1"))
+        self.assertIn("1 memory back in `old`", self.run_scope("undo", "1", "--apply"))
 
 
 if __name__ == "__main__":

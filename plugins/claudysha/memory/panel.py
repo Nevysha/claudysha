@@ -1,7 +1,7 @@
 """Memory module: its dashboard panels (see plugin/dashboard.py for the spec).
 
-Two pages, in the dashboard's React app (dashboard/src/memory/): the review queue (proposed
-memories) and the memory browser. The routes below reuse the store's own functions, so the dashboard and `mem` behave
+Three pages, in the dashboard's React app (dashboard/src/memory/): the review queue (proposed
+memories), the memory browser, and the scopes (rename, alias, undo). The routes below reuse the store's own functions, so the dashboard and `mem` behave
 the same. Browsing doesn't count as use (only a session's `mem search` does), and every write
 takes the plugin's shared lock, so it never overlaps a `claudysha load`.
 """
@@ -177,6 +177,8 @@ def edit(query, body):
         raise ValueError("nothing to change")
     with claudysha.home_lock(), db() as conn:
         r = mem.get(conn, int(body.get("id") or 0))
+        if "scope" in fields:
+            fields["scope"] = mem.resolve_scope(conn, fields["scope"])
         cols = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE memories SET {cols} WHERE id = ?", (*fields.values(), r["id"]))
         conn.commit()
@@ -196,6 +198,54 @@ def supersede(query, body):
         conn.execute("UPDATE memories SET status = 'superseded', superseded_by = ? WHERE id = ?", (new_id, old["id"]))
         conn.commit()
         return {"old": old["id"], "new": new_id}
+
+
+# ---------------------------------------------------------------- scopes
+
+def change_row(c):
+    return {**dict(c), "memory_ids": json.loads(c["memory_ids"]), "aliases": json.loads(c["aliases"]),
+            "label": mem.fmt_change(c)}
+
+
+def scopes(query, body):
+    """Every scope with its counts and aliases, and the recent renames and aliases (to undo one)."""
+    with db() as conn:
+        return {"scopes": mem.scope_overview(conn), "global": mem.GLOBAL,
+                "history": [change_row(c) for c in mem.scope_history(conn, 30)]}
+
+
+def plan_of(conn, body):
+    kind = body.get("kind")
+    if kind not in ("rename", "alias", "unalias"):
+        raise ValueError("kind must be rename, alias or unalias")
+    plan = mem.plan_scope_change(conn, kind, str(body.get("old") or ""), str(body.get("new") or ""),
+                                 alias=body.get("alias", True) is not False)
+    return plan
+
+
+def plan_json(plan):
+    return {"kind": plan["kind"], "old": plan["old"], "new": plan["new"], "count": len(plan["memory_ids"]),
+            "aliases": plan["aliases"]}
+
+
+def scope_plan(query, body):
+    """What a rename, alias or unalias would do (like `mem scope ...` without --apply)."""
+    with db() as conn:
+        return plan_json(plan_of(conn, body))
+
+
+def scope_apply(query, body):
+    """Do a rename, alias or unalias, planned afresh: it is recorded and can be undone."""
+    with claudysha.home_lock(), db() as conn:
+        plan = plan_of(conn, body)
+        change_id, moved = mem.apply_scope_change(conn, plan)
+        return {**plan_json(plan), "id": change_id, "moved": moved}
+
+
+def scope_undo(query, body):
+    """Reverse a recorded scope change: its memories go back, except those moved since."""
+    with claudysha.home_lock(), db() as conn:
+        return {"id": int(body.get("id") or 0), **mem.undo_scope_change(conn, int(body.get("id") or 0))}
 
 
 # ---------------------------------------------------------------- overview
@@ -234,6 +284,10 @@ def spec():
             ("POST", "/api/memory/status"): set_status,
             ("POST", "/api/memory/edit"): edit,
             ("POST", "/api/memory/supersede"): supersede,
+            ("GET", "/api/memory/scopes"): scopes,
+            ("POST", "/api/memory/scope/plan"): scope_plan,
+            ("POST", "/api/memory/scope/apply"): scope_apply,
+            ("POST", "/api/memory/scope/undo"): scope_undo,
         },
         "overview": overview_cards,
         "scopes": lambda: summary({}, {})["scopes"],

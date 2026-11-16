@@ -154,5 +154,41 @@ class TestWriting(PanelTest):
         self.assertTrue(cards["Waiting for review"]["accent"])
 
 
+class TestScopes(PanelTest):
+    def test_plan_apply_and_undo(self):
+        a = self.add("one", scope="/srv/notes")
+        self.add("two", scope="notes")
+        plan = panel.scope_plan({}, {"kind": "rename", "old": "/srv/notes", "new": "notes"})
+        self.assertEqual((plan["count"], plan["aliases"]), (1, [["/srv/notes", None, "notes"]]))
+        self.assertEqual(mem.get(self.db, a)["scope"], "/srv/notes")  # a plan writes nothing
+        done = panel.scope_apply({}, {"kind": "rename", "old": "/srv/notes", "new": "notes"})
+        self.assertEqual(done["moved"], 1)
+        s = panel.scopes({}, {})
+        self.assertEqual([(x["scope"], x["active"], x["aliases"]) for x in s["scopes"]],
+                         [("notes", 2, ["/srv/notes"])])
+        self.assertEqual(s["history"][0]["memory_ids"], [a])
+        panel.scope_undo({}, {"id": done["id"]})
+        self.assertEqual(mem.get(self.db, a)["scope"], "/srv/notes")
+        self.assertTrue(panel.scopes({}, {})["history"][0]["undone_at"])
+
+    def test_rename_without_alias_and_bad_requests(self):
+        self.add("one", scope="old")
+        panel.scope_apply({}, {"kind": "rename", "old": "old", "new": "new", "alias": False})
+        self.assertEqual(panel.scopes({}, {})["scopes"][0]["aliases"], [])
+        for body in ({"kind": "drop", "old": "new"}, {"kind": "rename", "old": "global", "new": "x"},
+                     {"kind": "unalias", "old": "new"}):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                panel.scope_plan({}, body)
+        with self.assertRaises(ValueError):
+            panel.scope_undo({}, {"id": 99})
+
+    def test_edit_to_an_alias_files_under_its_scope(self):
+        a = self.add("one", scope="old")
+        b = self.add("two", scope="elsewhere")
+        panel.scope_apply({}, {"kind": "alias", "old": "old", "new": "new"})
+        panel.edit({}, {"id": b, "scope": "old"})
+        self.assertEqual([mem.get(self.db, i)["scope"] for i in (a, b)], ["new", "new"])
+
+
 if __name__ == "__main__":
     unittest.main()
