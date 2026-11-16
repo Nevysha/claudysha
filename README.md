@@ -209,7 +209,7 @@ As a session goes on (every few hundred transcript lines), when it compacts and 
 Each memory has `text`, `type`, `scope`, `tags`, `confidence` (0 to 1), `status`, `superseded_by`, `source` (`manual` or `extract`), `session_id`, `created_at` (when the conversation happened), `last_used_at`, `use_count` and a JSON `meta`.
 
 - Types: `fact`, `decision`, `dead_end`, `event`, `todo`, `preference`, `feedback`.
-- Statuses: `active`, `proposed`, `superseded`, `rejected`. Extracted `preference` and `feedback` entries shape how Claude behaves, so they stay `proposed` until you approve them: `mem review` in a terminal (one at a time, single keys), or `/claudysha:memory-review` in a session.
+- Statuses: `active`, `proposed`, `superseded`, `rejected`. Extracted `preference` and `feedback` entries shape how Claude behaves, so they stay `proposed` until you approve them: `mem review` in a terminal (one at a time, single keys), or `/claudysha:memory-review` in a session. Both cover the current scope and `global`; the session start counts only those too.
 - One fact per entry: each memory states one thing, says it once, is still true, and is worth finding in a later session: not the state a session was in (what was running, what a check showed, "tested and pushed"), and not what core memory already says. Extraction aims for that (below), and `/claudysha:memory-cleanup` fixes what slips through: in a session, Claude goes over one scope (`mem similar` finds the entries that look alike, then it reads the whole list for outdated, contradicting and multi-fact entries, entries that only mattered during one session, and entries that repeat core memory) and fixes it. Changes that lose nothing (duplicates, merges, splits within one scope, never preferences or feedback) it applies directly and lists at the end; the rest (corrections, removals, scope changes) it asks about, one question per kind of change. Replaced entries stay as history, and `mem restore <id>` undoes any change.
 
 ### Scopes
@@ -254,7 +254,7 @@ mem merge <id> <id...> --text "<one entry>"   # entries that repeat each other b
 mem split <id> "<text>" "<text>" [...]         # an entry stating several things becomes one per thing
 mem similar [-s scope] [-n 30] [--min-score 0.3]   # groups of entries that look alike (with the global ones they repeat)
 mem edit <id> [--text ...] [-t ...] [-s ...] [--tags ...] [-c ...]
-mem review [-l]                   # (or the dashboard's Review page) one by one: a approve, r reject, e edit, t type, s skip, u undo (-l: list)
+mem review [-l] [-s <scope> | -A]  # (or the dashboard's Review page) one by one: a approve, r reject, e edit, t type, s skip, u undo (-l: list; default: this scope and global)
 mem approve <id...>  |  mem reject <id...>   # reject also forgets a wrong entry nothing replaces
 mem restore <id...>              # undo the supersede, merge, split or reject that replaced it
 mem ingest <transcript.jsonl> [--dry-run]

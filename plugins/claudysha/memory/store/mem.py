@@ -762,12 +762,27 @@ def cmd_edit(db, a):
     print(fmt(get(db, r["id"])))
 
 
+def proposed_where(scopes):
+    """SQL filter and params for proposed memories in `scopes` (None: every scope)."""
+    if scopes is None:
+        return "status = 'proposed'", ()
+    return f"status = 'proposed' AND scope IN ({','.join('?' * len(scopes))})", tuple(scopes)
+
+
 def cmd_review(db, a):
-    rows = db.execute("SELECT * FROM memories WHERE status = 'proposed' ORDER BY scope, type, id").fetchall()
+    # A session reviews only its own scope and global; other scopes are reviewed from their own
+    # sessions, or by the user with -s / -A.
+    scopes = None if a.all_scopes else (a.scope or [claudysha.current_scope(), GLOBAL])
+    where, params = proposed_where(scopes)
+    rows = db.execute(f"SELECT * FROM memories WHERE {where} ORDER BY scope, type, id", params).fetchall()
+    interactive = not a.list and sys.stdin.isatty()
+    others = 0 if scopes is None else db.execute(
+        "SELECT COUNT(*) FROM memories WHERE status = 'proposed'").fetchone()[0] - len(rows)
+    hint = f"{others} more in other scopes: `mem review -A` (or `-s <scope>`)." if others and interactive else ""
     if not rows:
-        print("nothing to review")
+        print("nothing to review" + (f" here. {hint}" if hint else ""))
         return
-    if a.list or not sys.stdin.isatty():
+    if not interactive:
         scope = None
         for r in rows:
             if r["scope"] != scope:
@@ -779,9 +794,9 @@ def cmd_review(db, a):
         return
     import review
     c = review.review_loop(db, rows, search, NEEDS_APPROVAL)
-    left = db.execute("SELECT COUNT(*) FROM memories WHERE status = 'proposed'").fetchone()[0]
+    left = db.execute(f"SELECT COUNT(*) FROM memories WHERE {where}", params).fetchone()[0]
     print(f"\n{c['approved']} approved, {c['rejected']} rejected, {c['edited']} edited, "
-          f"{c['retyped']} retyped, {c['skipped']} skipped. {left} still proposed.")
+          f"{c['retyped']} retyped, {c['skipped']} skipped. {left} still proposed." + (f" {hint}" if hint else ""))
 
 
 def cmd_ingest(db, a):
@@ -881,9 +896,9 @@ def commands_note(user):
 def session_note(db, here):
     """What the SessionStart hook prints for a session in scope `here`."""
     user = claudysha.user_name()
-    active, proposed = db.execute(
-        """SELECT COUNT(*) FILTER (WHERE status = 'active'),
-                  COUNT(*) FILTER (WHERE status = 'proposed') FROM memories""").fetchone()
+    active = db.execute("SELECT COUNT(*) FROM memories WHERE status = 'active'").fetchone()[0]
+    where, params = proposed_where([here, GLOBAL])  # other scopes are reviewed from their own sessions
+    proposed = db.execute(f"SELECT COUNT(*) FROM memories WHERE {where}", params).fetchone()[0]
     out = [f"Long-term memory: you remember {active} things from past sessions. "
            f"This session's scope is `{here}` (the repository, or else the folder, it works in). "
            "Search your memory (claudysha:recall skill) before answering about past work or redoing something: "
@@ -1088,6 +1103,9 @@ def main():
 
     s = sub.add_parser("review", help="go through proposed memories one by one (approve, reject, edit)")
     s.add_argument("-l", "--list", action="store_true", help="just list them")
+    s.add_argument("-s", "--scope", action="append",
+                   help="review this scope (repeatable; default: this session's scope and global)")
+    s.add_argument("-A", "--all-scopes", action="store_true", help="review every scope")
     s.set_defaults(fn=cmd_review)
 
     s = sub.add_parser("ingest", help="extract memories from a session transcript")

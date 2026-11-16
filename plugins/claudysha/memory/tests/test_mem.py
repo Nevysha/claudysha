@@ -410,6 +410,36 @@ class TestIngest(TranscriptTest):
         self.add("be brief", "feedback", "global", status="proposed")
         self.assertIn("1 proposed", self.session_start(here))
 
+    def test_session_start_counts_only_this_scope_and_global_proposals(self):
+        here = str(Path(self.tmp.name).resolve())
+        self.add("deploy on fridays", "preference", "webshop", status="proposed")
+        self.assertNotIn("proposed", self.session_start(here))
+        self.add("be brief", "feedback", "global", status="proposed")
+        self.add("run the linter here", "preference", here, status="proposed")
+        self.assertIn("2 proposed", self.session_start(here))
+
+    def test_review_list_defaults_to_this_scope_and_global(self):
+        here = str(Path(self.tmp.name).resolve())
+        self.add("be brief", "feedback", "global", status="proposed")
+        self.add("run the linter here", "preference", here, status="proposed")
+        self.add("deploy on fridays", "preference", "webshop", status="proposed")
+
+        def run(scope=None, all_scopes=False):
+            a = mock.Mock(list=True, scope=scope, all_scopes=all_scopes)
+            with mock.patch.dict("os.environ", {"CLAUDE_PROJECT_DIR": here}), \
+                    redirect_stdout(io.StringIO()) as out:
+                mem.cmd_review(self.db, a)
+            return out.getvalue()
+        out = run()
+        self.assertIn("be brief", out)
+        self.assertIn("run the linter", out)
+        self.assertNotIn("fridays", out)
+        self.assertNotIn("other scopes", out)  # a session isn't pointed at other scopes
+        self.assertIn("fridays", run(all_scopes=True))
+        out = run(scope=["webshop"])
+        self.assertIn("fridays", out)
+        self.assertNotIn("be brief", out)
+
     def test_session_start_loads_global_and_own_rules_and_lists_other_scopes(self):
         here = str(Path(self.tmp.name).resolve())
         self.add("Answer in short paragraphs", "feedback", "global")
