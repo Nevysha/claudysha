@@ -755,7 +755,7 @@ def describe_plan(plan):
                      f"again. Memories already moved stay in `{plan['new']}` (`mem scope history` and "
                      "`mem scope undo` move them back).")
     elif n:
-        lines.append(f"  {memories(n)} move from `{plan['old']}` to `{plan['new']}`")
+        lines.append(f"  {memories(n)} {'moves' if n == 1 else 'move'} from `{plan['old']}` to `{plan['new']}`")
     for name, before, after in plan["aliases"]:
         if plan["kind"] == "unalias":
             continue

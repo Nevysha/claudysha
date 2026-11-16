@@ -620,7 +620,7 @@ class TestScopeRenameAlias(TranscriptTest):
     def test_rename_is_a_dry_run_until_apply(self):
         a = self.add("a fact", scope="/srv/notes")
         out = self.run_scope("rename", "/srv/notes", "notes")
-        self.assertIn("1 memory move", out)
+        self.assertIn("1 memory moves from", out)
         self.assertIn("dry run", out)
         self.assertEqual(self.scopes(a), ["/srv/notes"])
         self.run_scope("rename", "/srv/notes", "notes", "--apply")
