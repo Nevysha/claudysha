@@ -58,19 +58,31 @@ git clone https://github.com/Nevysha/claudysha.git ~/claudysha
 ~/claudysha/install.sh            # asks a few questions, then installs claudysha@nevysha for your user
 ~/claudysha/install.sh --dev      # the same, then turns dev mode on (to work on claudysha itself)
 ~/claudysha/install.sh --path     # the same, and adds the commands to your PATH without asking
-~/claudysha/install.sh --remove   # uninstalls; your data stays
 ```
+
+To uninstall, see [Uninstall](#-uninstall).
 
 `install.sh`:
 
 1. writes the settings file if it doesn't exist (in a terminal it asks for the data folder, your name and your pronouns; otherwise it uses the defaults),
 2. creates the data folder, and lets each module create its part,
-3. links the `claudysha` and `mem` commands into `~/.claudysha/bin`, and offers to put that folder on your PATH: one marked line in your `~/.zshrc` or `~/.bashrc`, added only if you agree in a terminal or pass `--path` (otherwise it prints the line to add; nothing to do if your startup files already have it). `--remove` deletes the links and that line,
+3. links the `claudysha` and `mem` commands into `~/.claudysha/bin`, and offers to put that folder on your PATH: one marked line in your `~/.zshrc` or `~/.bashrc`, added only if you agree in a terminal or pass `--path` (otherwise it prints the line to add; nothing to do if your startup files already have it). `uninstall.sh` deletes the links and that line,
 4. registers the repo as a local marketplace (`nevysha`) and installs the plugin.
 
 Claude Code runs a cached copy of the plugin, made for its version (`version` in `plugins/claudysha/.claude-plugin/plugin.json`). After pulling or editing, run `./install.sh` again: it refreshes the copy when the version changed. New sessions (or `/reload-plugins`) then use it.
 
 **From Claude Code's plugin manager:** `/plugin marketplace add Nevysha/claudysha`, then `/plugin install claudysha@nevysha`. The data folder is created at the first session start, which also suggests running `claudysha setup` to write the settings.
+
+## 🧹 Uninstall
+
+```
+~/claudysha/uninstall.sh           # removes the plugin, its commands and the PATH line; your data and settings stay
+~/claudysha/uninstall.sh --purge   # the same, then deletes your data and settings too
+```
+
+`uninstall.sh` stops the dashboard, removes the plugin and the `nevysha` marketplace from Claude Code, and deletes the `claudysha` and `mem` links (only the ones it made) and the marked PATH line in `~/.zshrc` / `~/.bashrc`. With `--purge` it also deletes the plugin's folder (the data folder's parent, see [Settings](#️-settings)) and the settings file. Before that it writes an archive of your data to your home folder (`claudysha load` can restore it) and asks you to type `erase`, so it only runs in a real terminal. It never deletes the repo: remove `~/claudysha` yourself afterwards. Then start a new session (or `/reload-plugins`) so the hooks and skills stop loading. If you installed from the plugin manager, `/plugin uninstall claudysha@nevysha` removes the plugin.
+
+`install.sh --remove` still works: it runs `uninstall.sh`.
 
 ## ⚙️ Settings
 

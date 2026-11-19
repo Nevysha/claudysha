@@ -4,7 +4,7 @@
 #   ./install.sh            install (settings: ~/.config/claudysha/claudysha.conf, created from claudysha.conf.example)
 #   ./install.sh --dev      install, then turn dev mode on (asks you to confirm, see the README)
 #   ./install.sh --path     install, and add the commands' folder to your PATH without asking
-#   ./install.sh --remove   uninstall (keeps your data, removes the commands and the PATH line)
+#   ./install.sh --remove   uninstall: same as ./uninstall.sh (keeps your data)
 # The `claudysha` and `mem` commands are linked into the plugin's bin/ folder (~/.claudysha/bin);
 # in a terminal, it offers to put that folder on your PATH.
 set -euo pipefail
@@ -69,20 +69,7 @@ ensure_on_path() {
 }
 
 if [ "${1:-}" = "--remove" ]; then
-    claude plugin uninstall "$plugin" --keep-data 2>/dev/null || true
-    claude plugin marketplace remove nevysha 2>/dev/null || true
-    set_bindir
-    for c in "${commands[@]}"; do
-        if ours "$bindir" "$c"; then rm "$bindir/$c"; echo "removed $bindir/$c"; fi
-    done
-    for f in "$HOME/.zshrc" "$HOME/.bashrc"; do
-        if grep -qsF "$marker" "$f"; then
-            grep -vF "$marker" "$f" > "$f.claudysha-tmp" && cat "$f.claudysha-tmp" > "$f" && rm "$f.claudysha-tmp"
-            echo "removed the PATH line from $f"
-        fi
-    done
-    echo "claudysha removed (your data is kept: $("$dir/claudysha" home)/data)"
-    exit 0
+    exec "$dir/uninstall.sh" "${@:2}"   # kept for older instructions
 fi
 
 command -v claude >/dev/null || { echo "claude CLI not found" >&2; exit 1; }
